@@ -18,6 +18,8 @@ GGskript связывает эти две модели в одну работу.
 
 Итог: мощная новая модель руководит и проверяет, а младшая и дешёвая исполняет.
 
+**Telegram (по желанию).** К этой связке можно подключить Telegram-бота, но это не обязательно: без токена бота GGskript просто не пишет в Telegram, а управлять им можно с панели на ПК. Бот позволяет удалённо следить за тем, что происходит на компьютере, запрашивать скриншоты и отправлять команды, например «Стоп», «Старт» или «отправь заново». Как его настроить, описано в разделах «Первая настройка» и «Telegram».
+
 Подробности о модели: [Gemini 4 Argon в блоге Google](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/), [документация Gemini API](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon).
 
 ## Как устроено
@@ -60,7 +62,7 @@ GGskript связывает эти две модели в одну работу.
 
 - Windows 10/11, Windows PowerShell 5.1 (входит в Windows).
 - Antigravity IDE и браузер с Gemini: Google Chrome (рекомендуется), Яндекс Браузер или Microsoft Edge.
-- Telegram-бот (токен от @BotFather) — для управления и уведомлений.
+- По желанию: Telegram-бот (токен от @BotFather) для удалённого управления, уведомлений и скриншотов.
 - Для тестов: модуль Pester 5.9.1; для фонового режима — Google Chrome.
 
 ## Установка
@@ -69,7 +71,7 @@ GGskript связывает эти две модели в одну работу.
 2. Если скачивали ZIP — снять пометку «из интернета», иначе PowerShell может блокировать скрипты:
    `Get-ChildItem C:\Tools\GGskript -Recurse | Unblock-File`
 3. Скопировать образцы настроек: `relay_config.example.json` → `relay_config.json`, `relay_settings.example.json` → `relay_settings.json` (в `relay_settings.json` оставить только то, что хотите поменять).
-4. Сохранить токен бота: `powershell -ExecutionPolicy Bypass -File Set-TgToken.ps1` (подробнее — «Первая настройка»).
+4. По желанию, если нужен Telegram, сохранить токен бота: `powershell -ExecutionPolicy Bypass -File Set-TgToken.ps1` (подробнее — «Первая настройка»).
 5. Создать ярлык на рабочем столе: объект `wscript.exe "C:\Tools\GGskript\GGskript_launch.vbs"`, рабочая папка `C:\Tools\GGskript`, значок `C:\Tools\GGskript\GGskript.ico`.
 
 Личные файлы (`tg_token.dpapi`, `relay_config.json`, `relay_settings.json`, учёт `relay_state.json`, журнал, `PAUSE`/`STOP`) создаются у вас локально и в git не попадают (см. `.gitignore`).
