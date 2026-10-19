@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Gemini (тестовая страница — меню моделей)</title>
+<style>#menu{display:none} #menu.open{display:block} .cdk-overlay-backdrop{display:none} .cdk-overlay-backdrop.open{display:block;position:fixed;inset:0}</style></head><body>
+<div class="input-area-switch-label"></div>
+<button class="input-area-switch" aria-label="Выбор режима, сейчас используется Flash Высокая" aria-expanded="false"><span class="lbl">Flash Высокая</span></button>
+<div class="cdk-overlay-backdrop"></div>
+<div id="menu" role="menu">
+  <button role="menuitem" class="mat-mdc-menu-item">3.5 Flash-Lite Самые быстрые ответы</button>
+  <button role="menuitem" class="mat-mdc-menu-item selected">Выбрано 3.8 Flash All-around help</button>
+  <button role="menuitem" class="mat-mdc-menu-item">3.1 Pro Расширенные возможности рассуждения</button>
+  <button role="menuitem" class="mat-mdc-menu-item" id="argon">4 Argon Сложные задачи</button>
+  <button role="menuitem" class="mat-mdc-menu-item">Уровень рассуждений</button>
+</div>
+<rich-textarea><div class="ql-editor ql-blank" contenteditable="true"></div></rich-textarea>
+<script>
+const btn=document.querySelector('.input-area-switch'), menu=document.getElementById('menu'), bd=document.querySelector('.cdk-overlay-backdrop'), lbl=document.querySelector('.input-area-switch-label');
+window.__picked=[];
+function setModel(m){ btn.querySelector('.lbl').textContent=m+' Высокая'; btn.setAttribute('aria-label','Выбор режима, сейчас используется '+m+' Высокая'); lbl.textContent=m+' Высокая'; }
+function close(){ menu.classList.remove('open'); bd.classList.remove('open'); btn.setAttribute('aria-expanded','false'); }
+setModel('Flash');
+btn.addEventListener('click',()=>{ const o=!menu.classList.contains('open'); menu.classList.toggle('open',o); bd.classList.toggle('open',o); btn.setAttribute('aria-expanded',o?'true':'false'); });
+bd.addEventListener('click',close);
+menu.querySelectorAll('[role=menuitem]').forEach(it=>it.addEventListener('click',()=>{
+  if(it.getAttribute('aria-disabled')==='true') return;
+  const n=it.textContent.replace(/^Выбрано\s+/,'');
+  if(/Уровень/.test(n)) return;
+  window.__picked.push(n);
+  const m=/Argon/.test(n)?'Argon':/Pro/.test(n)?'Pro':/Lite/.test(n)?'Flash-Lite':'Flash';
+  if(!window.__revert) setModel(m);
+  close();
+}));
+</script></body></html>

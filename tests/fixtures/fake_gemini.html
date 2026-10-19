@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Gemini (тестовая страница)</title>
+<style>button.stop{display:none} button.stop.on{display:inline-block}</style></head><body>
+<button data-test-id="bard-mode-menu-button">Argon Ultra</button>
+<div id="chat"></div>
+<rich-textarea><div class="ql-editor ql-blank" contenteditable="true"></div></rich-textarea>
+<button class="send-button" aria-label="Send message" disabled>Send</button>
+<button class="stop" aria-label="Stop response">Stop</button>
+<script>
+const inp=document.querySelector('.ql-editor'), send=document.querySelector('.send-button'), stop=document.querySelector('.stop'), chat=document.getElementById('chat');
+window.__sent=[];
+inp.addEventListener('input',()=>{ send.disabled=!inp.innerText.trim(); });
+send.addEventListener('click',()=>{
+  const t=inp.innerText; window.__sent.push(t);
+  const q=document.createElement('user-query'); const d=document.createElement('div'); d.className='query-text'; d.textContent=t; q.appendChild(d); chat.appendChild(q);
+  inp.innerHTML=''; send.disabled=true; stop.classList.add('on');
+  setTimeout(()=>{
+    const r=document.createElement('model-response');
+    if(t.indexOf('ОШИБКА')>=0){ r.innerHTML='<p>Что-то пошло не так. Попробуйте ещё раз.</p>'; }
+    else {
+      const n=window.__sent.length;
+      r.innerHTML='<p>Ответ номер '+n+'.</p>'+
+        '<code-block><div class="code-block-decoration"><span>Python</span></div><pre><code>print(1)</code></pre></code-block>'+
+        '<code-block><div class="code-block-decoration"><span>Markdown</span></div><pre><code>## Задача '+n+'\nсделай X\n</code></pre></code-block><p>Конец.</p>';
+    }
+    chat.appendChild(r); stop.classList.remove('on');
+  },1200);
+});
+</script></body></html>

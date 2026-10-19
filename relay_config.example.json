@@ -1,0 +1,6 @@
+{
+  "_comment": "Скопируйте в relay_config.json. Токен лучше НЕ писать сюда, а сохранить через Set-TgToken.ps1 (DPAPI). chat_id заполнится сам после /start боту.",
+  "telegram_username": "ваш_логин_без_@",
+  "chat_id": "",
+  "telegram_token": ""
+}

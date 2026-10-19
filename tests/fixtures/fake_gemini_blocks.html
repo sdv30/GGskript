@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Gemini blocks (тестовая страница пункта 25D)</title></head><body>
+<button data-test-id="bard-mode-menu-button">Argon Ultra</button>
+<div id="chat"></div>
+<rich-textarea><div class="ql-editor" contenteditable="true"></div></rich-textarea>
+<script>
+// Шапка блока как в настоящем Gemini: подпись + кнопки с mat-icon (у иконки есть текст-лигатура).
+function blk(label,code,opt){ opt=opt||{};
+  const btns='<div class="buttons"><button aria-label="Copy code"><mat-icon>content_copy</mat-icon></button></div>';
+  let deco='';
+  if(!opt.nodeco){ deco='<div class="code-block-decoration header-formatted">'+(opt.iconfirst?btns:'')+(label===null?'':'<span>'+label+'</span>')+(opt.iconfirst?'':btns)+'</div>'; }
+  return '<code-block><div class="code-block">'+deco+'<div class="formatted-code-block-internal-container"><pre><code>'+code+'</code></pre></div></div></code-block>';
+}
+const S={
+  mixed:  blk('Plaintext','plain text')+blk('Markdown','## MD mixed\nтекст')+blk('Python','print(1)'),
+  pyonly: blk('Python','print(1)')+blk('Bash','ls -la'),
+  lower:  blk('Python','x=1')+blk('  markdown  ','## MD lower'),
+  upper:  blk('MARKDOWN','## MD upper'),
+  nolabel:blk(null,'Markdown\nэто код, а не подпись'),
+  nodeco: blk('','Markdown\nшапки нет',{nodeco:true}),
+  twomd:  blk('Markdown','## A')+blk('Python','p')+blk('Markdown','## B'),
+  iconfirst: blk('Markdown','## icon first',{iconfirst:true})
+};
+window.setScenario=function(k){
+  const chat=document.getElementById('chat');
+  chat.innerHTML='<user-query><div class="query-text">Файл отчёта: P_2026-10-19_001.md</div></user-query><model-response><p>Ответ.</p>'+S[k]+'</model-response>';
+  return k;
+};
+setScenario('mixed');
+</script></body></html>

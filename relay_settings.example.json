@@ -1,0 +1,23 @@
+{
+  "_comment": "Скопируйте в relay_settings.json и оставьте только то, что хотите поменять. Ключи с '_' игнорируются. Все ключи и значения по умолчанию — в lib/Core.ps1, Get-DefaultSettings.",
+  "_transport": "GeminiTransport: uia (через окно, как раньше) | cdp (без фокуса; Start-GeminiChrome.bat, порт CdpPort). AgTransport: uia (через окно) | mailbox | cdp (без фокуса; Start-Antigravity-Debug.bat, порт AgCdpPort).",
+  "GeminiTransport": "uia",
+  "GeminiCdpFallback": true,
+  "CdpPort": 9222,
+  "AgTransport": "uia",
+  "AgCdpPort": 9333,
+  "AgCoordFallback": false,
+  "IgnoreBefore": "",
+  "IdleSec": 3,
+  "RestoreFocus": true,
+  "RestoreClipboard": true,
+  "StrictCommands": true,
+  "TgReplyKeyboard": true,
+  "StartupNewestOnly": true,
+  "StartupAskNewest": true,
+  "ShutdownEnabled": true,
+  "ShutdownForce": false,
+  "ScreenshotMode": "dialog",
+  "GitCheckpointRepo": "",
+  "LogMaxMB": 5
+}

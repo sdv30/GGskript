@@ -1,0 +1,18 @@
+# Концы строк: файлы в репозитории хранятся как в рабочей папке (renormalize не нужен)
+* text=auto eol=lf
+*.ps1  text eol=lf
+*.psm1 text eol=lf
+*.psd1 text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+# cmd.exe и wscript требуют CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.vbs  text eol=crlf
+# Двоичные
+*.ico   binary
+*.dll   binary
+*.png   binary
+*.jpg   binary
+*.dpapi binary

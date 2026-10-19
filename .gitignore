@@ -1,0 +1,34 @@
+# GGskript: личные и рабочие файлы — в git не попадают
+# Секреты и личные настройки
+tg_token.dpapi
+*.dpapi
+relay_*.json
+!relay_config.example.json
+!relay_settings.example.json
+relay_*.json.bak
+*.bak
+*.tmp
+
+# Рабочее состояние и журналы
+relay_*.txt
+relay_log.txt*
+PAUSE
+STOP
+commands.txt
+commands.txt.proc
+answers/
+inbox/
+
+# Тесты и инструменты
+test-results/
+tools/Pester/
+_archive_*/
+
+# Локальные отчёты (личные пути и данные)
+REPORT.md
+
+# Windows / редакторы
+Thumbs.db
+desktop.ini
+*.lnk
+.vscode/

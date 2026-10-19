@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Antigravity IDE (тестовая страница)</title>
+<style>.busy{display:none}.busy.on{display:inline-block}</style></head><body>
+<div id="msgs"></div>
+<div id="queue"></div>
+<button id="acc">Accept all</button>
+<div id="box"><div role="combobox" aria-label="Message input" contenteditable="true" class="max-h-[300px] rounded-md cursor-text"></div>
+<button class="busy" type="button" aria-label="Cancel (Ctrl+D)" data-tooltip-id="input-send-button-cancel-tooltip">■</button></div>
+<script>
+const inp=document.querySelector('[aria-label="Message input"]'), msgs=document.getElementById('msgs'), busy=document.querySelector('.busy');
+window.__sent=[]; window.__accepted=0; window.__enterIgnored=false;
+inp.addEventListener('keydown',e=>{
+  if(e.key==='Enter' && !e.shiftKey){
+    e.preventDefault(); if(window.__enterIgnored) return;
+    const t=inp.innerText; if(!t.trim()) return;
+    window.__sent.push(t); const d=document.createElement('div'); d.className='msg user'; d.textContent=t; msgs.appendChild(d);
+    inp.innerHTML=''; busy.classList.add('on'); setTimeout(()=>busy.classList.remove('on'),1500);
+  }
+});
+document.getElementById('acc').addEventListener('click',()=>{ window.__accepted++; document.getElementById('acc').remove(); });
+window.setForeign=t=>{ inp.textContent=t; };
+</script></body></html>

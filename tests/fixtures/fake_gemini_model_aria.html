@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Gemini (модель через aria-label)</title></head><body>
+<button class="mdc-button input-area-switch" id="m1" aria-label="Выбор режима, сейчас используется Flash"><span>Flash</span><mat-icon>keyboard_arrow_down</mat-icon></button>
+<div id="chat">
+<user-query><div class="query-text">Файл отчёта: MyProject_2026-10-18_003.md
+
+Отчёт агента 003</div></user-query>
+<model-response><p>Ответ 3</p></model-response>
+<user-query><div class="query-text"># Отчёт MyProject, шаг 2
+Сделано: *настроил* прокси-парсер, добавил `retry` и логирование ошибок; проверил на 50 страницах — всё работает стабильно и быстро.</div></user-query>
+<model-response><p>Ответ на ручной</p></model-response>
+</div>
+<rich-textarea><div class="ql-editor ql-blank" contenteditable="true"></div></rich-textarea>
+<script>window.onlyAria=()=>{ const b=document.getElementById('m1'); b.innerHTML='<mat-icon>keyboard_arrow_down</mat-icon>'; };</script>
+</body></html>

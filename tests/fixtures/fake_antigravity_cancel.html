@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Antigravity IDE (пункт 28: Send/Cancel — одна кнопка)</title></head><body>
+<!-- Пункт 28: худший случай — во время работы агента та же кнопка data-testid="send-button" становится «Cancel (Ctrl+D)». -->
+<div id="msgs"></div>
+<button id="acc">Accept all</button><button id="rej">Reject all</button><button id="stopall">Cancel all</button>
+<div id="box"><div role="combobox" aria-label="Message input" contenteditable="true" class="cursor-text"></div>
+<button id="sb" data-testid="send-button" aria-label="Send message">➤</button></div>
+<script>
+const inp=document.querySelector('[aria-label="Message input"]'), sb=document.getElementById('sb');
+window.__sent=[]; window.__cancelled=0; window.__rejected=0; window.__accepted=0; window.__busy=false;
+window.setBusy=v=>{ window.__busy=v; if(v){ sb.setAttribute('aria-label','Cancel (Ctrl+D)'); sb.setAttribute('data-tooltip-id','input-send-button-cancel-tooltip'); sb.textContent='■'; }
+  else { sb.setAttribute('aria-label','Send message'); sb.removeAttribute('data-tooltip-id'); sb.textContent='➤'; } };
+sb.addEventListener('click',()=>{ if(window.__busy){ window.__cancelled++; window.setBusy(false); return; } const t=inp.innerText; if(t.trim()){ window.__sent.push(t); inp.innerHTML=''; } });
+document.getElementById('acc').addEventListener('click',()=>{ window.__accepted++; });
+document.getElementById('rej').addEventListener('click',()=>{ window.__rejected++; });
+document.getElementById('stopall').addEventListener('click',()=>{ window.__cancelled++; });
+</script></body></html>
