@@ -25,7 +25,9 @@ GGskript\
 ├─ LICENSE                      GNU GPL v3.0
 ├─ .gitignore, .gitattributes   что не попадает в git; концы строк (ps1 — LF, bat/vbs — CRLF)
 ├─ docs\                        ARCHITECTURE.md, CODE_MAP.md, DEPENDENCIES.md
+│  ├─ images\gui.png            скриншот панели для README (личные данные размыты)
 │  └─ history\PLAN.md           история: план доработок v2 (пункты 1–29)
+├─ prompts\                     системные промпты: ARGON_SYSTEM_PROMPT.md, FLASH_SYSTEM_PROMPT.md
 ├─ lib\                         модули (dot-source)
 ├─ tests\                       Pester-тесты + fixtures\
 ├─ tools\                       Test-Syntax.ps1 (проверка синтаксиса и BOM)
@@ -83,6 +85,15 @@ GGskript\
 | `fixtures\*.html` | Сохранённые страницы Gemini/Antigravity/usage для тестов CDP-JS и парсеров |
 
 Теги: `ItemNN`, `WindowsOnly`, `LinuxOnly`, `Integration` (исключается `-Safe`).
+
+## prompts\
+
+| Файл | Назначение |
+|---|---|
+| `ARGON_SYSTEM_PROMPT.md` | Регламент старшей модели Argon: вставляется первым сообщением в чат Gemini. Задаёт аудит отчётов, один шаг плана на промпт и задание для Flash одним блоком Markdown без обратных кавычек |
+| `FLASH_SYSTEM_PROMPT.md` | Регламент младшей модели Flash: вставляется первым сообщением в чат агента Antigravity. Задаёт короткий ответ в чат, полный английский отчёт в `Downloads\<Project>_<YYYY-MM-DD>_<NNN>.md`, экономию токенов и запрет выдумывать данные |
+
+Код GGskript эти файлы не читает: их вставляют в модели вручную. Но имя файла отчёта и блок Markdown, которых требуют промпты, это ровно то, что ищет GGskript.
 
 ## tools\
 
