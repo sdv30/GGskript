@@ -42,6 +42,8 @@ function Get-DefaultSettings{
     GeminiInputY     = 0.86
     GeminiTimeoutSec = 900
     GeminiQuietSec   = 8
+    WaitAfterLastPrompt = $true      # файл в чате без нашей отправки — ждать законченный ответ ПОСЛЕ последнего запроса
+    DupAnswerWaitSec = 600         # ответ совпал с уже переданным — ждать НОВЫЙ ответ на отчёт до N сек, потом спросить (0 — спрашивать сразу)
     AgProcess        = @('Antigravity IDE','Antigravity')
     AgInputX         = 0.38
     AgInputY         = 0.93
@@ -583,6 +585,7 @@ function Parse-Command{
   $fw='(?:перешли|переслать|пересылай)'
   if($t -match '^/toag(?:@\S+)?\s*$' -or $n -match "^\s*$fw\s+(?:последний\s+)?ответ\s+(?:в\s+)?$ag$end"){ return @{k='fwdans'} }
   if($t -match '^/togemini(?:@\S+)?\s*$' -or $n -match "^\s*$fw\s+(?:последний\s+)?(?:ответ|отч[еe]т)\s+(?:в\s+)?$gem$end"){ return @{k='fwdrep'} }
+  if($n -match "^\s*(?:$fw|передай|отправь)\s+(?:последний\s+)?(?:файл|отч[еe]т)(?:\s+отч[еe]та)?\s+(?:в\s+)?$gem$end"){ return @{k='fwdrep'} }
   if($t -match '(?s)^/send(?:@\S+)?\s+(.+)$'){ return @{k='write'; arg=$matches[1].Trim()} }
   if($t -match '^/send(?:@\S+)?\s*$' -or $n -match "^\s*напиши$end"){ return @{k='write'} }
   if($n -match '^\s*список\s+окон|^/windows'){ return @{k='dlglist'} }

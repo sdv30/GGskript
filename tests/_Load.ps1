@@ -11,6 +11,7 @@ function New-TestCfg([string]$Root){
   $cfg.Downloads=(Join-Path $Root 'Downloads'); New-Item -ItemType Directory -Force $cfg.Downloads | Out-Null
   $cfg.IgnoreBefore=''
   $cfg.IdleSec=0
+  $cfg.DupAnswerWaitSec=0; $cfg.WaitAfterLastPrompt=$false   # пункт 31: старые тесты — прежнее поведение; Item31 включает явно
   $cfg
 }
 # Защита от побочных эффектов: функции, которые трогают буфер обмена, экран, сеть Telegram и браузер, в тестах

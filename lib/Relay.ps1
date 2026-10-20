@@ -278,6 +278,7 @@ function Process-File($next){
     Tg-Send "📤 [$(ProjOf $n)] Файл $n отправлен в Gemini (модель: $m)" | Out-Null
   } else { Log "Повтор: $n уже отправлен в Gemini (этап «отправлен»), повторно не отправляю — забираю ответ" }
   $script:State="жду ответ Gemini на $n"
+  if(-not $ctx -and $Cfg.WaitAfterLastPrompt){ Wait-AnswerAfterLastPrompt $n }   # файл в чате без нашей отправки: ответ — только ПОСЛЕ последнего запроса (с этим отчётом)
   [void](Wait-GemAnswerStoppable $ctx)
   $m2=Get-ModelNow
   if(-not (Is-Argon $m2)){
@@ -301,7 +302,16 @@ function Process-File($next){
     return
   }
   $hh=Get-Hash8 $ans
-  if(Test-RelayHash $script:St $hh){ Set-Stale $n $hh "ответ Gemini совпадает с уже переданным раньше (хэш $hh, «$(Get-FirstLine $ans)»)"; return }
+  if(Test-RelayHash $script:St $hh){
+    # прежний ответ ещё на экране (новый не начался/генерируется) — жду новый, и только по таймауту спрашиваю
+    Log "Ответ на $n совпал с уже переданным (хэш $hh) — похоже, это прежний ответ; жду новый до $($Cfg.DupAnswerWaitSec) сек"
+    $fresh=Wait-FreshAnswer $n $hh
+    if(-not $fresh){ Set-Stale $n $hh "ответ Gemini совпадает с уже переданным раньше (хэш $hh, «$(Get-FirstLine $ans)»), нового ответа за $($Cfg.DupAnswerWaitSec) сек не появилось"; return }
+    $m2=Get-ModelNow
+    if(-not (Is-Argon $m2)){ Set-Stage $n 'resend'; Enter-LimitStop $m2 "Ответ на $n пришёл от модели «$m2» и в Antigravity НЕ передан; после возобновления файл будет отправлен в Gemini заново."; return }
+    $ans=$fresh; $hh=Get-Hash8 $ans; Log "Новый ответ на $n получен (хэш $hh)"
+    if(Test-RelayHash $script:St $hh){ Set-Stale $n $hh "ответ Gemini совпадает с уже переданным раньше (хэш $hh)"; return }
+  }
   if($script:Adopted.ContainsKey($n)){   # пункт 24: файл подхвачен при запуске — ответ мог быть уже вставлен вручную
     $script:Adopted.Remove($n)
     if(Ag-HasText $ans){ Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'answered' $hh; Set-Stage $n 'relayed' $hh; Mark-Done $n; $msg="ℹ️ Ответ на $n уже есть в Antigravity (вставлен вручную) — повторно не вставляю"; Log $msg; Tg-Send $msg | Out-Null; return }
@@ -309,6 +319,39 @@ function Process-File($next){
   Set-Stage $n 'answered' $hh
   Save-AnswerCache $n $ans
   Relay-ToAg $n $ans $hh $m2
+}
+# Ждёт, пока после последнего запроса в чате (он содержит отчёт) появится законченный ответ. Только чтение.
+function Wait-AnswerAfterLastPrompt([string]$n){
+  $t0=Get-Date; $quiet=$null
+  while($true){
+    $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{}
+    $ok=$false; if(-not $gen){ try{ $ok=[bool](Gem-PeekAnswer).answered }catch{} }
+    if($ok){ if(-not $quiet){ $quiet=Get-Date }; if(((Get-Date)-$quiet).TotalSeconds -ge $Cfg.GeminiQuietSec){ return } } else { $quiet=$null }
+    if(((Get-Date)-$t0).TotalSeconds -gt $Cfg.GeminiTimeoutSec){ throw "Таймаут ожидания ответа Gemini на $n (после последнего запроса ответа нет)" }
+    Nap 2
+  }
+}
+# Ответ совпал с уже переданным: ждать ответ с другим хэшем (после генерации/изменения), до DupAnswerWaitSec. $null — не дождался.
+function Wait-FreshAnswer([string]$n,[string]$OldHash){
+  $lim=[double]$Cfg.DupAnswerWaitSec; if($lim -le 0){ return $null }
+  $t0=Get-Date; $base=$null; $quiet=Get-Date; $seenGen=$false; $lastCopy=[datetime]::MinValue
+  while(((Get-Date)-$t0).TotalSeconds -lt $lim){
+    Nap 2
+    $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{}
+    if($gen){ $seenGen=$true; $quiet=Get-Date; continue }
+    $pk=$null; try{ $pk=Gem-PeekAnswer }catch{}
+    $sig= if($pk){ "$($pk.answered)|$(@($pk.labels) -join ',')|$(if($pk.code){ Get-Hash8 ([string]$pk.code) })" } else { '' }
+    if($null -eq $base){ $base=$sig }
+    if($sig -ne $base){ $base=$sig; $quiet=Get-Date; $seenGen=$true; continue }
+    if(((Get-Date)-$quiet).TotalSeconds -lt $Cfg.GeminiQuietSec){ continue }
+    if($pk -and $pk.code){ if((Get-Hash8 ([string]$pk.code)) -eq $OldHash){ continue } }
+    elseif(-not $seenGen -and ((Get-Date)-$lastCopy).TotalSeconds -lt 30){ continue }   # текст блока не читается — копирую не чаще раза в 30 с
+    if($pk -and -not $pk.answered){ continue }
+    $lastCopy=Get-Date; $seenGen=$false
+    $a=Gem-CopyCode
+    if($a -and (Get-Hash8 $a) -ne $OldHash){ return $a }
+  }
+  $null
 }
 function Get-StaleFile{ @(Get-Files | Where-Object { (Get-Stage $_.Name) -eq 'stale' }) | Select-Object -First 1 }
 

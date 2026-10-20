@@ -130,7 +130,11 @@ function AgUia-AllowPrompt($h){
   $subs=@(Uia-FindAll -Root $h -ControlType 'Button' | Where-Object { -not (Uia-IsOffscreen $_) -and (Test-AutoAllowSubmit (Uia-Name $_)) -and (Uia-IsEnabled $_) })
   if(-not $subs.Count){ return @{ found=$false } }
   $opt=@(Uia-FindAll -Root $h -NameRx $Cfg.AutoAllowOptionRx | Where-Object { -not (Uia-IsOffscreen $_) -and (Test-AutoAllowOption (Uia-Name $_)) }) | Select-Object -First 1
-  if(-not $opt){ return @{ found=$false } }
+  if(-not $opt){
+    # Submit видна, а нужного варианта нет — сообщаю, что вижу рядом (для диагностики; ничего не нажимаю)
+    $near=@(Uia-FindAll -Root $h -NameRx '(?i)allow|разреш' | Where-Object { -not (Uia-IsOffscreen $_) } | ForEach-Object { "[$(Uia-CtlType $_)] $(Format-Short (Uia-Name $_) 50)" } | Select-Object -First 6)
+    return @{ found=$true; ok=$false; why="вижу кнопку Submit, но варианта «Yes, allow this time» нет$(if($near.Count){' (рядом: '+($near -join '; ')+')'}else{' (элементов с «allow» не видно через UIA)'})" }
+  }
   $name=(Uia-Name $opt).Trim(); $orect=Uia-Rect $opt
   $done=$false; $el=$opt
   for($i=0;$i -lt 3 -and $el -and -not $done;$i++){

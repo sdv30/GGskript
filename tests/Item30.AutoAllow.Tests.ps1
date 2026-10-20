@@ -75,7 +75,7 @@ Describe 'Пункт 30: AgUia-AllowPrompt (без мыши и фокуса)' -T
     Should -Invoke Uia-Invoke -Times 0 -ParameterFilter { $el -eq 'SKIP' -or $el -eq 'OPT2' }
   }
   It 'нет Submit — запрос не считается найденным, ничего не нажимает' { Mock Uia-FindAll { if($ControlType -eq 'Button'){ @('SKIP') } else { @('OPT1') } }; (AgUia-AllowPrompt 42).found | Should -BeFalse; Should -Invoke Uia-Select -Times 0; Should -Invoke Uia-Invoke -Times 0 }
-  It 'есть только «always» — ничего не выбирает' { Mock Uia-FindAll { if($ControlType -eq 'Button'){ @('SUBMIT') } else { @('OPT2') } }; (AgUia-AllowPrompt 42).found | Should -BeFalse; Should -Invoke Uia-Invoke -Times 0 }
+  It 'есть только «always» — ничего не выбирает' { Mock Uia-FindAll { if($ControlType -eq 'Button'){ @('SUBMIT') } else { @('OPT2') } }; $r=AgUia-AllowPrompt 42; $r.ok | Should -BeFalse; $r.why | Should -Match 'варианта'; Should -Invoke Uia-Invoke -Times 0; Should -Invoke Uia-Select -Times 0 }
   It 'вариант не выбирается без фокуса — Submit НЕ нажимается' { Mock Uia-Select { $false }; Mock Uia-Invoke { $false }; Mock Uia-Parent { $null }; $r=AgUia-AllowPrompt 42; $r.ok | Should -BeFalse; $r.found | Should -BeTrue }
 }
 Describe 'Пункт 30: CDP — запрос разрешения в DOM (headless Chromium, fake_antigravity_allow.html)' -Tag Item30,Integration {

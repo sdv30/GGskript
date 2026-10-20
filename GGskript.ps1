@@ -104,6 +104,13 @@ if($args -contains '-testpaste'){
   }
   exit
 }
+# -testallow — только чтение: что UIA видит в окне Antigravity из запроса разрешения (Submit/Skip/allow/always). Ничего не нажимает.
+if($args -contains '-testallow'){
+  $h=Ag-GetWindow; Log "Antigravity: окно=$([bool]$h) «$(if($h){Uia-Name (Uia-Root $h)})»"
+  if($h){ $all=@(Uia-FindAll -Root $h -NameRx '(?i)allow|разреш|submit|skip|подтверд'); Log "  элементов: $($all.Count)"
+    foreach($e in $all | Select-Object -First 40){ Log "  [$(Uia-CtlType $e)] «$(Format-Short (Uia-Name $e) 80)» скрыт=$(Uia-IsOffscreen $e) вариант=$(Test-AutoAllowOption (Uia-Name $e)) кнопка=$(Test-AutoAllowSubmit (Uia-Name $e))" } }
+  exit
+}
 # -testag — только чтение: отвечает ли окно Antigravity и что в поле чата (без фокуса, кликов и буфера)
 if($args -contains '-testag'){
   $d=Get-AgDiag; $hl=$d.health
