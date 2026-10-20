@@ -16,7 +16,7 @@ $script:PendingConfirm=$null
 $script:StaleNotified=@{}
 $script:Blk=@{ key=$null; info=$null; since=$null; notified=$false; lastRecheck=(Get-Date) }
 $script:AutoPlan=$null; $script:AutoPlanKey=''; $script:AutoFails=0; $script:AutoLastAttempt=$null
-$script:TriageNeeded=$true; $script:LastStartReport=''; $script:StopAnnounced=$false; $script:AbortOnStop=$false; $script:PausedSince=$null; $script:Held=@{}; $script:Adopted=@{}   # пункт 24
+$script:TriageNeeded=$true; $script:LastStartReport=''; $script:StopAnnounced=$false; $script:AbortOnStop=$false; $script:PausedSince=$null; $script:Held=@{}; $script:Adopted=@{}; $script:AutoSend=@{}; $script:SendNotBefore=@{}   # пункт 24
 $script:UsageNoTabSaid=$false; $script:ManualModelSaid=$false   # пункт 26
 $script:AgBlock=$null   # @{ kind; msg; detail; file; since; notifiedAt; lastLog; restartedAt } — Antigravity не принимает ответ
 
@@ -89,7 +89,7 @@ function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoCha
     # пункт 27C: отправлен вручную — узнаю по содержимому (или по вложению с именем файла)
     $hit=Test-FileInGemini $nw
     if($hit -and $hit.how -eq 'name' -and (Test-ReportNewerThanAg $script:St $nw.LastWriteTime)){
-      $out.lines+="   ⚖ очередь: $n ($($nw.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini не считаю отправкой (это упоминание в промпте), очередь Gemini"; $hit=$null }
+      $out.lines+="   ⚖ очередь: $n ($($nw.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini не считаю отправкой (это упоминание в промпте), очередь Gemini"; $hit=Test-FileInGemini $nw -ContentOnly }
     if($hit -and $hit.last){ $vis=$true; $how=$(if($hit.how -eq 'content'){' (узнал по содержимому — отправлен вручную)'}else{' (по имени файла во вложении)'}) }
     elseif($hit){
       if(-not $DryRun){ [void](Set-FileStage -State $script:St -Name $n -Stage 'skipped' -Note 'уже есть в чате Gemini (найден по содержимому), но не последним запросом — ответ автоматически не беру' -Force); Save-State }
@@ -100,21 +100,26 @@ function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoCha
     if(-not $DryRun){ if($st -ne 'sent'){ Set-Stage $n 'sent' -Force }; $script:Adopted[$n]=$true }
     $out.lines+="   самый новый $n уже есть в чате Gemini$how — повторно НЕ отправляю, беру ответ (если ответ уже есть в Antigravity — не вставляю)"; return $out
   }
-  if($Cfg.StartupAskNewest){
+  if($Cfg.StartupAskNewest -and -not $Cfg.AutoDecide){
     if(-not $DryRun){ $script:Held[$n]=$true }
     $out.ask=$n; $out.lines+="   самый новый $n в чате Gemini НЕ найден — спрошу в Telegram, отправлять ли (до ответа не отправляю)"; return $out
   }
-  if($st -eq 'sent' -and -not $DryRun){ Set-Stage $n 'resend' }
-  $out.lines+="   самый новый $n в чате Gemini не найден — отправлю (StartupAskNewest=false)"
+  if(-not $DryRun){
+    if($st -eq 'sent'){ Set-Stage $n 'resend' }
+    $g=[int]$Cfg.AutoSendGraceSec; $script:AutoSend[$n]=$true
+    if($g -gt 0){ $script:SendNotBefore[$n]=(Get-Date).AddSeconds($g) }
+    Log "Авторешение: $n новее последней вставки в Antigravity и в чате Gemini не найден — очередь Gemini; отправлю сам через $g сек, перед отправкой перепроверю чат (если отправлен вручную — не дублирую)"
+  }
+  $out.lines+="   самый новый $n в чате Gemini не найден — очередь Gemini, отправлю сам через $([int]$Cfg.AutoSendGraceSec) сек (перед отправкой перепроверю чат, вопрос не задаю)"
   $out
 }
 # Пункт 27C: файл уже в чате Gemini? (по имени или содержимому; ошибки чтения — $null, т.е. «не знаю»)
-function Test-FileInGemini($f){
+function Test-FileInGemini($f,[switch]$ContentOnly){
   if(-not $f){ return $null }
   try{
     $p= if($f.FullName){ $f.FullName } else { Join-Path $Cfg.Downloads $f.Name }
     $txt= if(Test-Path -LiteralPath $p){ [IO.File]::ReadAllText($p,[Text.Encoding]::UTF8) } else { '' }
-    $r=Gem-FindFile $f.Name $txt
+    $r=Gem-FindFile $(if($ContentOnly){''}else{$f.Name}) $txt
     if($r){ Log "Чат Gemini: $($f.Name) найден ($(if($r.how -eq 'content'){'по содержимому'}else{'по имени'}), $(if($r.last){'последним запросом'}else{'не последним'}))" }
     $r
   }catch{ Log "Чат Gemini: не удалось проверить, есть ли $($f.Name) в чате ($($_.Exception.Message))"; $null }
@@ -128,6 +133,7 @@ function Resolve-NewestChoice([string]$n,[string]$Choice){
   $script:Held.Remove($n)
   if($Choice -eq 'send'){
     if((Get-Stage $n) -eq 'sent'){ Set-Stage $n 'resend' } elseif((Get-Stage $n) -eq 'skipped'){ Set-Stage $n 'resend' }
+    $script:AutoSend[$n]=$true   # перед отправкой перепроверю чат: если уже отправлен вручную — не дублирую
     Tg-Send "Ок, отправлю $n в Gemini$(if($script:Busy){' после текущего шага'})." | Out-Null
   } else {
     [void](Set-FileStage -State $script:St -Name $n -Stage 'skipped' -Note $(if($Choice -eq 'expired'){'вопрос при запуске: время вышло'}else{'«не отправлять» по кнопке'}) -Force); Save-State
@@ -269,11 +275,16 @@ function Process-File($next){
     if($nh){ [void](Set-FileStage -State $script:St -Name $n -Stage 'skipped' -Note "старее уже обработанного $nh" -Force); Save-State
       $msg="⏭ $n старее уже обработанного $nh (по времени файла) — в Gemini НЕ отправляю, пропускаю. Если он всё-таки нужен — пришлите его текст через «Напиши»."; Log $msg; Tg-Send $msg | Out-Null; return }
   }
-  if($st -eq '' -and $Cfg.MatchByContent){
+  if($script:SendNotBefore.ContainsKey($n)){
+    if((Get-Date) -lt $script:SendNotBefore[$n]){ $script:State="$($n): отправлю в Gemini в $($script:SendNotBefore[$n].ToString('HH:mm:ss')) (жду, не отправлен ли вручную)"; return }
+    $script:SendNotBefore.Remove($n)
+  }
+  $auto=$script:AutoSend.ContainsKey($n); if($auto){ $script:AutoSend.Remove($n) }
+  if(($st -eq '' -or ($auto -and $st -eq 'resend')) -and $Cfg.MatchByContent){
     # пункт 27C: пользователь мог отправить файл в Gemini сам — не дублирую
     $hit=Test-FileInGemini $next
     if($hit -and $hit.how -eq 'name' -and (Test-ReportNewerThanAg $script:St $next.LastWriteTime)){
-      Log "⚖ Очередь: $n ($($next.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini — это упоминание в промпте, а не отправка; очередь Gemini → отправляю"; $hit=$null }
+      Log "⚖ Очередь: $n ($($next.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini — это упоминание в промпте, а не отправка; очередь Gemini → проверяю по содержимому, не отправлен ли вручную"; $hit=Test-FileInGemini $next -ContentOnly }
     if($hit -and $hit.last){
       Set-Stage $n 'sent'; $st='sent'; $script:Adopted[$n]=$true
       $msg="ℹ️ [$(ProjOf $n)] $n уже есть в чате Gemini ($(if($hit.how -eq 'content'){'узнал по содержимому — отправлен вручную'}else{'вложение с именем файла'})) — повторно НЕ отправляю, жду и беру ответ"; Log $msg; Tg-Send $msg | Out-Null
@@ -898,7 +909,12 @@ function Start-Procedure([switch]$DryRun){
   if($lp -and $lp -ne $n -and (Get-SortKey $lp $Cfg.Pattern) -gt (Get-SortKey $n $Cfg.Pattern)){
     # противоречие: в Gemini уже более новый отчёт, чем есть в Downloads
     $rep+="   ⚠️ противоречие: в Gemini последний отчёт $lp, а в Downloads самый новый — $n"
-    if(-not $DryRun -and -not (Is-Done $n) -and -not $askNewest){ $script:Held[$n]=$true; $askNewest=$n }
+    if($Cfg.AutoDecide){
+      if(-not $DryRun -and -not (Is-Done $n)){ $script:Held.Remove($n); [void](Set-FileStage -State $script:St -Name $n -Stage 'skipped' -Note "авторешение: в Gemini уже более новый отчёт $lp" -Force); Save-State; $askNewest=$null
+        $m="⚖ Авторешение: в Gemini последний отчёт $lp новее файла $n — $n НЕ отправляю (безопасный вариант), жду новый файл"; Log $m; Tg-Send $m | Out-Null }
+      $rep+="   авторешение: $n не отправляю — жду новый файл"
+    } else {
+    if(-not $DryRun -and -not (Is-Done $n) -and -not $askNewest){ $script:Held[$n]=$true; $askNewest=$n } }
     $askWhy="⚠️ В чате Gemini последний отчёт — $lp, а самый новый файл в Downloads — $n (старее). Не понимаю, что сейчас происходит, поэтому ничего не делаю сам."
   }
   $pk=$null; try{ $pk=Gem-PeekAnswer }catch{ Log "Протокол: ответ Gemini не прочитан ($($_.Exception.Message))" }
@@ -914,7 +930,11 @@ function Start-Procedure([switch]$DryRun){
   elseif($st -eq 'skipped' -and $lp -eq $n -and $inAg){ $turn="Antigravity — $n пропущен скриптом (отправлен вручную), ответ Gemini на него уже у агента; жду следующий файл" }
   elseif($st -eq 'skipped'){ $turn="ничей — $n пропущен; жду новый файл" }
   elseif(Is-Done $n){
-    if($st -eq 'relayed' -and $lp -eq $n -and $pk -and $pk.code -and $inAg -eq $false -and -not $DryRun){
+    if($st -eq 'relayed' -and $lp -eq $n -and $pk -and $pk.code -and $inAg -eq $false -and -not $DryRun -and $Cfg.AutoDecide){
+      $turn="Antigravity — ответ на $n по учёту передан; в окне Antigravity не виден (через окно читается не всё), повторно НЕ вставляю (авторешение); жду следующий файл"
+      Log "Авторешение: ответ на $n по учёту передан, в Antigravity не виден — повторно не вставляю (безопасный вариант)"
+    }
+    elseif($st -eq 'relayed' -and $lp -eq $n -and $pk -and $pk.code -and $inAg -eq $false -and -not $DryRun){
       $turn="ваш — ответ на $n по учёту передан, но в Antigravity его не вижу; спрашиваю"
       $p=New-TgPrompt -Kind 'proto' -Text "⚠️ Ответ Gemini на $n по моему учёту уже передан в Antigravity, но в чате Antigravity я его не вижу. Передать его в Antigravity?" -Buttons "Передать ответ в Antigravity=relay;Не передавать=norelay" -Data @{ name=$n }
     }

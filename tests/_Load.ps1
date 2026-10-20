@@ -12,6 +12,7 @@ function New-TestCfg([string]$Root){
   $cfg.IgnoreBefore=''
   $cfg.IdleSec=0
   $cfg.DupAnswerWaitSec=0; $cfg.WaitAfterLastPrompt=$false   # пункт 31: старые тесты — прежнее поведение; Item31 включает явно
+  $cfg.AutoDecide=$false; $cfg.AutoSendGraceSec=0   # пункт 35: старые тесты — прежнее поведение; Item35 включает явно
   $cfg
 }
 # Защита от побочных эффектов: функции, которые трогают буфер обмена, экран, сеть Telegram и браузер, в тестах
