@@ -169,6 +169,7 @@ function Get-DefaultSettings{
     GeminiTransport    = 'uia'      # 'uia' (как раньше) или 'cdp'
     GeminiCdpFallback  = $true      # пункт 27A: откат на UIA ТОЛЬКО если CDP недоступен (браузер без порта/нет вкладки), с сообщением в Telegram
     CdpPort            = 9222
+    CdpRecheckSec      = 300        # CDP недоступен — повторная проверка порта не чаще раза в N с (между ними сразу UIA, без строк в логе)
     CdpUrlLike         = 'gemini.google.com'
     CdpSelectors       = @{}         # переопределение CSS-селекторов страницы Gemini для CDP (см. lib/Gemini.Cdp.ps1, $CdpSelDefault)
     MatchByContent     = $true      # пункт 27C: файл считается уже отправленным в Gemini и по содержимому (вручную отправленные)
@@ -298,6 +299,10 @@ function Get-BrowserName([string]$Proc){
 # Заголовок окна без хвоста браузера: « - Google Chrome», « — Яндекс Браузер», « - Yandex Browser», « - Microsoft Edge», а также «, группа X» (группы вкладок).
 function Remove-BrowserSuffix([string]$Title){
   $t=[string]$Title
+  # Chrome с подсказкой о памяти: «Вкладка "X" использует 350 МБ памяти» / «X - Memory usage - 350 MB»
+  $m=[regex]::Match($t,'^\s*(?:Вкладка|Tab)\s+["«“](.+)["»”]\s+(?:использует|is using|uses)\b.*$')
+  if($m.Success){ $t=$m.Groups[1].Value }
+  $t=$t -replace '\s+[-—–]\s+(?:Использование памяти|Memory usage)\s+[-—–]\s+[\d.,]+\s*\S+\s*$',''
   $t=$t -replace '\s+[-—–]\s+(Google Chrome|Chromium|Яндекс[\s.]?Браузер|Yandex[\s.]?Browser|Яндекс|Yandex|Microsoft\W*Edge|Edge)\s*$',''
   $t=$t -replace ',\s+(группа|group)\s+[^,]*$',''
   $t=$t -replace '\s+(и ещё|and)\s+\d+\s+(страниц\w*|pages?)\s*$',''

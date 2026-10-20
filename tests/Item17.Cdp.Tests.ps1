@@ -3,7 +3,7 @@
   $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
 }
 Describe 'Пункт 17: выбор транспорта и безопасный откат' -Tag Item17 {
-  BeforeEach { $Cfg.GeminiTransport='cdp'; $Cfg.GeminiCdpFallback=$true; Mock Log {} }
+  BeforeEach { $Cfg.GeminiTransport='cdp'; $Cfg.GeminiCdpFallback=$true; Mock Log {}; $script:CdpDownUntil=$null; $script:CdpDownSaid=$false }
   It 'GeminiTransport=uia (по умолчанию) — CDP не вызывается' { $Cfg.GeminiTransport='uia'; Use-GemTransport 'x' { 'uia' } { throw 'не должно' } | Should -Be 'uia' }
   It 'чтение: CDP недоступен — откат на UIA с записью в лог' { Mock Tg-Send { 1 }; Use-GemTransport 'модель' { 'uia' } { throw 'CDP: Chrome с --remote-debugging-port=9222 не отвечает (нет Chrome)' } | Should -Be 'uia'; Should -Invoke Log -ParameterFilter { $m -like '*откат на UIA*' } }
   It 'отправка: NotSent из-за недоступного CDP — откат на UIA' { Mock Tg-Send { 1 }; Use-GemTransport 'отправка' { 'uia' } { throw [GG.RelayNotSentException]::new('CDP: нет вкладки с адресом gemini') } -Send | Should -Be 'uia' }

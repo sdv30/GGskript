@@ -174,3 +174,15 @@ Describe 'Пункт 26: переключение модели после выв
     Switch-ToArgon | Should -Be 'Argon'; $script:ManualModelSaid | Should -BeFalse
   }
 }
+
+Describe 'Вкладка лимитов в Chrome с подсказкой о памяти' -Tag Item26 {
+  It 'находит «Вкладка "Использование" использует 350 МБ памяти»' {
+    Test-UsageTabName 'Вкладка "Использование" использует 350 МБ памяти' | Should -BeTrue
+    Test-UsageTabName 'Usage - Memory usage - 350 MB' | Should -BeTrue
+    Test-UsageTabName 'Tab "Usage" is using 350 MB of memory' | Should -BeTrue
+  }
+  It 'чат с подсказкой о памяти — не вкладка лимитов, имя чата очищается' {
+    Test-UsageTabName 'Вкладка "Проект X - Google Gemini" использует 692 МБ памяти' | Should -BeFalse
+    Remove-BrowserSuffix 'Вкладка "Проект X - Google Gemini" использует 692 МБ памяти' | Should -Be 'Проект X - Google Gemini'
+  }
+}

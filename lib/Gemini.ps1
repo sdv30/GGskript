@@ -2,9 +2,12 @@
 # Откат CDP -> UIA: для чтения — при любой ошибке; для отправки — ТОЛЬКО если точно не отправлено (GG.RelayNotSentException).
 # Пункт 27A: откат на UIA (фокус, клавиатура) — ТОЛЬКО если CDP недоступен; один раз сообщаю в Telegram. Прочие ошибки CDP — как есть.
 $script:CdpDownSaid=$false
+# Без фокуса (CDP) — только если Gemini открыт через Start-GeminiChrome.bat; обычный браузер — штатно UIA.
+$script:CdpDownUntil=$null   # CDP недоступен — до этого времени сразу UIA, без повторных попыток и строк в логе
 function Use-GemTransport{
   param([string]$Op,[scriptblock]$Uia,[scriptblock]$Cdp,[switch]$Send)
   if($Cfg.GeminiTransport -ne 'cdp'){ return (& $Uia) }
+  if($script:CdpDownUntil -and (Get-Date) -lt $script:CdpDownUntil -and $Cfg.GeminiCdpFallback){ return (& $Uia) }
   try{
     $r=& $Cdp
     if($script:CdpDownSaid){ $script:CdpDownSaid=$false; $m='✅ Gemini: CDP-браузер снова доступен — работаю без фокуса и клавиатуры.'; Log $m; try{ Tg-Send $m | Out-Null }catch{} }
@@ -15,8 +18,13 @@ function Use-GemTransport{
     if(-not $Cfg.GeminiCdpFallback -or (@('stop','limit','paused','stale') -contains $k)){ throw }
     if($Send -and $k -ne 'notsent'){ throw }
     if(-not (Test-CdpUnreachable $_)){ throw }
-    Log "Gemini/CDP: $Op — CDP недоступен ($($_.Exception.Message)), откат на UIA"
-    if(-not $script:CdpDownSaid){ $script:CdpDownSaid=$true; try{ Tg-Send "⚠️ Gemini: CDP-браузер недоступен ($(Format-Short $_.Exception.Message 150)). Временно работаю через окно (UIA: фокус, клавиатура). Запустите Start-GeminiChrome.bat." | Out-Null }catch{} }
+    $sec=[int]$Cfg.CdpRecheckSec; if($sec -lt 10){ $sec=10 }
+    $script:CdpDownUntil=(Get-Date).AddSeconds($sec)
+    if(-not $script:CdpDownSaid){
+      $script:CdpDownSaid=$true
+      Log "Gemini: CDP-порт $($Cfg.CdpPort) не отвечает (обычный браузер без порта отладки) — откат на UIA (работаю через окно). Проверяю CDP раз в $sec с, повторно в лог не пишу."
+      try{ Tg-Send "ℹ️ Gemini: браузер запущен без порта отладки $($Cfg.CdpPort) — работаю через окно браузера (UIA: фокус, клавиатура). Это нормально для обычного Chrome/Яндекса." | Out-Null }catch{}
+    }
     & $Uia
   }
 }

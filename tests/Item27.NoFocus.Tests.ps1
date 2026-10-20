@@ -105,11 +105,13 @@ Describe 'Пункт 27C: запуск и обычная работа узнаю
   }
 }
 Describe 'Пункт 27A: откат Gemini CDP → UIA только при недоступном CDP' -Tag Item27,Item27A {
-  BeforeEach { $Cfg.GeminiTransport='cdp'; $Cfg.GeminiCdpFallback=$true; Mock Log {}; Capture-Tg; $script:CdpDownSaid=$false }
+  BeforeEach { $Cfg.GeminiTransport='cdp'; $Cfg.GeminiCdpFallback=$true; Mock Log {}; Capture-Tg; $script:CdpDownSaid=$false; $script:CdpDownUntil=$null }
   It 'CDP недоступен — UIA и одно сообщение в Telegram; потом CDP вернулся — сообщение «снова доступен»' {
     Use-GemTransport 'модель' { 'uia' } { throw [GG.RelayNotSentException]::new('CDP: браузер с --remote-debugging-port=9222 не отвечает (refused)') } | Should -Be 'uia'
     Use-GemTransport 'модель' { 'uia' } { throw [GG.RelayNotSentException]::new('CDP: нет вкладки с адресом') } | Should -Be 'uia'
-    @($script:Tg | Where-Object { $_ -match 'CDP-браузер недоступен' }).Count | Should -Be 1
+    @($script:Tg | Where-Object { $_ -match 'без порта отладки' }).Count | Should -Be 1
+    Use-GemTransport 'модель' { 'uia' } { throw 'CDP не должен вызываться в окне ожидания' } | Should -Be 'uia'
+    $script:CdpDownUntil=(Get-Date).AddSeconds(-1)
     Use-GemTransport 'модель' { 'uia' } { 'cdp' } | Should -Be 'cdp'
     @($script:Tg | Where-Object { $_ -match 'снова доступен' }).Count | Should -Be 1
   }
@@ -118,6 +120,7 @@ Describe 'Пункт 27A: откат Gemini CDP → UIA только при не
   }
   It 'отправка: NotSent из-за недоступности — откат; NotSent по другой причине — нет' {
     Use-GemTransport 'отправка' { 'uia' } { throw [GG.RelayNotSentException]::new('Gemini/CDP: CDP: браузер с --remote-debugging-port=9222 не отвечает (x) — НЕ отправлено') } -Send | Should -Be 'uia'
+    $script:CdpDownUntil=$null
     { Use-GemTransport 'отправка' { 'uia' } { throw [GG.RelayNotSentException]::new('Gemini/CDP: нет поля ввода — НЕ отправлено') } -Send } | Should -Throw '*нет поля ввода*'
   }
   It 'Find-CdpTarget: вкладка /app важнее прочих страниц Gemini' {
@@ -131,13 +134,14 @@ Describe 'Пункт 27A: откат Gemini CDP → UIA только при не
   }
 }
 Describe 'Пункт 27B: Antigravity без фокуса' -Tag Item27,Item27B {
-  BeforeEach { Mock Log {}; Capture-Tg; $script:AgCdpDownSaid=$false; $Cfg.AgTransport='cdp'; $Cfg.AgCdpFallback=$true }
+  BeforeEach { Mock Log {}; Capture-Tg; $script:AgCdpDownSaid=$false; $script:AgCdpDownUntil=$null; $Cfg.AgTransport='cdp'; $Cfg.AgCdpFallback=$true }
   It 'CDP Antigravity недоступен — UIA и одно сообщение в Telegram' {
     Mock AgCdp-Send { throw [GG.RelayNotSentException]::new('CDP Antigravity: порт 9333 не отвечает — Antigravity запущен без --remote-debugging-port (refused)') }
     Mock AgUia-Send {}
     Ag-Send -Text 'a' -Label 'x'; Ag-Send -Text 'b' -Label 'y'
     Should -Invoke AgUia-Send -Times 2
-    @($script:Tg | Where-Object { $_ -match 'Antigravity: CDP недоступен' }).Count | Should -Be 1
+    Should -Invoke AgCdp-Send -Times 1
+    @($script:Tg | Where-Object { $_ -match 'без порта отладки' }).Count | Should -Be 1
   }
   It 'чужой текст в поле (CDP) — ошибка, на UIA НЕ откатываюсь' {
     Mock AgCdp-Send { throw (New-AgBlocked 'foreign' 'В поле чата Antigravity чужой текст' 'x') }

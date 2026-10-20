@@ -202,18 +202,19 @@ function Check-MailboxAcks{
 # Единая точка отправки в Antigravity.
 # Пункт 27B: AgTransport='cdp' — без фокуса; откат на UIA только если CDP Antigravity недоступен (одно сообщение в Telegram).
 $script:AgCdpDownSaid=$false
+$script:AgCdpDownUntil=$null
 function Ag-Send{
   param([Parameter(Mandatory)][string]$Text,[string]$Label='',[string]$Name)
   if($Cfg.AgTransport -eq 'mailbox'){ [void](AgMailbox-Send -Text $Text -Label $Label -Name $Name); return }
-  if($Cfg.AgTransport -eq 'cdp'){
+  if($Cfg.AgTransport -eq 'cdp' -and -not ($script:AgCdpDownUntil -and (Get-Date) -lt $script:AgCdpDownUntil -and $Cfg.AgCdpFallback)){
     try{
       AgCdp-Send -Text $Text -Label $Label
       if($script:AgCdpDownSaid){ $script:AgCdpDownSaid=$false; $m='✅ Antigravity: CDP снова доступен — отправляю без фокуса и клавиатуры.'; Log $m; try{ Tg-Send $m | Out-Null }catch{} }
       return
     }catch{
       if(-not $Cfg.AgCdpFallback -or -not (Test-CdpUnreachable $_)){ throw }
-      Log "Antigravity/CDP недоступен ($($_.Exception.Message)) — отправляю через UIA"
-      if(-not $script:AgCdpDownSaid){ $script:AgCdpDownSaid=$true; try{ Tg-Send "⚠️ Antigravity: CDP недоступен ($(Format-Short $_.Exception.Message 150)). Временно вставляю через окно (UIA: фокус, клавиатура, буфер). Перезапустите Antigravity через Start-Antigravity-Debug.bat." | Out-Null }catch{} }
+      $sec=[int]$Cfg.CdpRecheckSec; if($sec -lt 10){ $sec=10 }; $script:AgCdpDownUntil=(Get-Date).AddSeconds($sec)
+      if(-not $script:AgCdpDownSaid){ $script:AgCdpDownSaid=$true; Log "Antigravity: CDP-порт $($Cfg.AgCdpPort) не отвечает (Antigravity запущен обычным способом) — вставляю через окно (UIA)"; try{ Tg-Send "ℹ️ Antigravity запущен без порта отладки $($Cfg.AgCdpPort) — вставляю через окно (UIA: фокус, клавиатура, буфер)." | Out-Null }catch{} }
     }
   }
   AgUia-Send -Text $Text -Label $Label
