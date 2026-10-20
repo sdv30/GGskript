@@ -123,6 +123,29 @@ function Get-AgDiag{
   $d.verdict= if($tx.Count -gt 1){ 'текст меняется (кто-то печатает)' } elseif(([string]$tx[0]).Trim()){ "чужой текст: '$(Get-First40 $tx[0])'" } else { 'поле пустое — готово к вставке' }
   $d
 }
+# ---------- Автоподтверждение запроса разрешения через UIA (без фокуса и мыши: только SelectionItem/Invoke) ----------
+function Uia-IsSelected($el){ try{ [bool]$el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected }catch{ $null } }
+function AgUia-AllowPrompt($h){
+  # дешёвая предпроверка: есть ли видимая кнопка Submit (поиск только по кнопкам, как у Accept all)
+  $subs=@(Uia-FindAll -Root $h -ControlType 'Button' | Where-Object { -not (Uia-IsOffscreen $_) -and (Test-AutoAllowSubmit (Uia-Name $_)) -and (Uia-IsEnabled $_) })
+  if(-not $subs.Count){ return @{ found=$false } }
+  $opt=@(Uia-FindAll -Root $h -NameRx $Cfg.AutoAllowOptionRx | Where-Object { -not (Uia-IsOffscreen $_) -and (Test-AutoAllowOption (Uia-Name $_)) }) | Select-Object -First 1
+  if(-not $opt){ return @{ found=$false } }
+  $name=(Uia-Name $opt).Trim(); $orect=Uia-Rect $opt
+  $done=$false; $el=$opt
+  for($i=0;$i -lt 3 -and $el -and -not $done;$i++){
+    $en=Uia-Name $el; if($i -and $en -and ($en -match $script:AutoAllowDenyRx)){ break }   # не подниматься в общий контейнер со «always»/«No»
+    if(Uia-Select $el){ $done=$true; if((Uia-IsSelected $el) -eq $false){ return @{ found=$true; ok=$false; why='вариант не выбрался (UIA)' } } }
+    elseif(Uia-Invoke $el){ $done=$true }
+    else { $el=Uia-Parent $el }
+  }
+  if(-not $done){ return @{ found=$true; ok=$false; why='вариант не поддерживает Invoke/SelectionItem — мышью без фокуса не нажимаю' } }
+  Start-Sleep -Milliseconds 250
+  $c=Select-NearestBelow $orect @(Uia-FindAll -Root $h -ControlType 'Button' | Where-Object { -not (Uia-IsOffscreen $_) -and (Test-AutoAllowSubmit (Uia-Name $_)) -and (Uia-IsEnabled $_) } | ForEach-Object { @{ el=$_; rect=(Uia-Rect $_) } })
+  if(-not $c){ return @{ found=$true; ok=$true; opt=$name; note='Submit исчезла после выбора' } }
+  if(-not (Uia-Invoke $c.el)){ return @{ found=$true; ok=$false; why='Submit не нажалась через Invoke' } }
+  @{ found=$true; ok=$true; opt=$name }
+}
 # Перезапуск зависшего Antigravity (только при AgAutoRestartMin>0; по умолчанию выключено).
 function Restart-Antigravity($ProcessId){
   $p=Get-Process -Id $ProcessId -EA Stop; $exe=$p.Path

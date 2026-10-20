@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Antigravity IDE (автоподтверждение)</title></head><body>
+<!-- Запрос разрешения агента как в Antigravity: 4 варианта + Skip / Submit. В истории чата — строка с тем же текстом (ловушка). -->
+<div id="msgs"><div><div><p>Yes, allow this time</p></div></div></div>
+<div id="panel">
+  <div class="title">Allow running pytest on step 1 tests?</div>
+  <div id="opts">
+    <div class="opt" role="option" aria-selected="false" data-i="1"><span class="num">1</span><span>Yes, allow this time</span></div>
+    <div class="opt" role="option" aria-selected="false" data-i="2"><span class="num">2</span><span>Yes, and always allow pytest in this conversation</span></div>
+    <div class="opt" role="option" aria-selected="false" data-i="3"><span class="num">3</span><span>Yes, and always allow pytest</span></div>
+    <div class="opt" role="option" aria-selected="false" data-i="4"><span class="num">4</span><span>No (tell the agent what to do instead)</span></div>
+  </div>
+  <button id="skip">Skip</button><button id="submit">Submit</button>
+</div>
+<div id="box"><div role="combobox" aria-label="Message input" contenteditable="true" class="cursor-text"></div>
+<button id="sb" data-testid="send-button" aria-label="Send message">➤</button></div>
+<script>
+window.__submitted=[]; window.__skipped=0; window.__old=0; window.__sel=null;
+const opts=Array.from(document.querySelectorAll('.opt'));
+opts.forEach(o=>o.addEventListener('click',()=>{ opts.forEach(x=>x.setAttribute('aria-selected','false')); o.setAttribute('aria-selected','true'); window.__sel=o.dataset.i; }));
+document.getElementById('submit').addEventListener('click',()=>{ window.__submitted.push(window.__sel); });
+document.getElementById('skip').addEventListener('click',()=>{ window.__skipped++; });
+
+window.reset=(show,firstText)=>{ window.__submitted=[]; window.__skipped=0; window.__old=0; window.__sel=null; opts.forEach(x=>x.setAttribute('aria-selected','false'));
+  document.getElementById('panel').style.display=show?'':'none'; document.getElementById('msgs').style.display='none';
+  opts[0].lastElementChild.textContent=firstText||'Yes, allow this time'; };
+window.showHistory=()=>{ document.getElementById('msgs').style.display=''; };
+</script></body></html>

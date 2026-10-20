@@ -56,6 +56,10 @@ function Get-DefaultSettings{
     AgQueueMaxTries  = 3
     AgSendNowName    = '^(Send Now|Send now|Отправить сейчас)$'
     AcceptAllName    = '^(Accept all|Принять все)$'
+    AutoAllowPrompts = $false       # автоподтверждение запросов разрешения Antigravity («Allow running …?» → «Yes, allow this time» + Submit); флажок в панели / «автоподтверждение вкл|выкл»
+    AutoAllowEverySec= 3            # как часто проверять запрос разрешения (сек)
+    AutoAllowOptionRx= '^\s*(1[\s.)]*)?(Yes,\s*allow this time|Да,\s*разрешить\s+(в этот раз|один раз|сейчас))\s*$'   # ТОЛЬКО разовое разрешение; «always»/«No» отсекаются жёстко в коде
+    AutoAllowSubmitRx= '^\s*(Submit|Подтвердить)\s*$'
     TgOffsetFile     = (Join-Path $Root 'relay_tg_offset.txt')
     QuotaEveryMin        = 10
     GeminiWebCheck       = $true
@@ -215,7 +219,7 @@ function Merge-Settings{
       $cfg[$k]=$nv
     }
   }
-  foreach($rx in 'Pattern','RxPrompt','RxCode','RxCopy','RxStop','RxModel','ModelMenuSkipRx','ModelSelectedRx','AgPlaceholderRx','AgSendNowName','AcceptAllName','UsageTabTitle','UsageExistingTabRx','SafeBtnRx'){
+  foreach($rx in 'Pattern','RxPrompt','RxCode','RxCopy','RxStop','RxModel','ModelMenuSkipRx','ModelSelectedRx','AgPlaceholderRx','AgSendNowName','AcceptAllName','AutoAllowOptionRx','AutoAllowSubmitRx','UsageTabTitle','UsageExistingTabRx','SafeBtnRx'){
     try{ [void][regex]::new([string]$cfg[$rx]) }catch{ $warn.Add("Настройка '$rx' — некорректный регэксп, верну значение по умолчанию"); $cfg[$rx]=$Defaults[$rx] }
   }
   if($cfg.Pattern -notmatch '\?<project>' -or $cfg.Pattern -notmatch '\?<date>' -or $cfg.Pattern -notmatch '\?<n>'){ $warn.Add("В Pattern нет групп project/date/n — верну значение по умолчанию"); $cfg.Pattern=$Defaults.Pattern }
@@ -566,6 +570,14 @@ function Parse-Command{
     if($tl -match '^(cancel|отмена|abort)$'){ return @{k='shutdowncancel'} }; if($tl -match '^(status|статус)$'){ return @{k='shutdownstatus'} }
     return @{k='shutdown'; spec=(ConvertFrom-ShutdownTail $tl)} }
   if($n -match "^\s*(?:пожалуйста,?\s+)?(?:выключи(?:ть)?|выруби(?:ть)?|отключи(?:ть)?)\s+$pcw(?:\s+(.*?))?\s*[.!]*\s*$"){ return @{k='shutdown'; spec=(ConvertFrom-ShutdownTail ([string]$matches[1]))} }
+  # автоподтверждение запросов разрешения Antigravity: «автоподтверждение вкл|выкл», /autoallow on|off; без аргумента — состояние
+  if($t -match '^/autoallow(?:@\S+)?(?:\s+(\S+))?\s*$' -or $n -match "^\s*авто\s*-?\s*подтвержд\w*(?:\s+(\S+))?$end"){
+    $a=([string]$matches[1]).ToLower() -replace 'ё','е'
+    if(-not $a){ return @{k='autoallow'; on=$null} }
+    if($a -match '^(вкл\w*|on|да|1)$'){ return @{k='autoallow'; on=$true} }
+    if($a -match '^(выкл\w*|откл\w*|off|нет|0)$'){ return @{k='autoallow'; on=$false} }
+    return @{k='autoallow'; on=$null}
+  }
   if($n -match '^\s*(да|yes|подтверждаю|ок,?\s*отправляй)\s*[.!]*\s*$'){ return @{k='confirm'} }
   if($n -match '^\s*(нет|no|отмена|cancel|/cancel)\s*[.!]*\s*$'){ return @{k='cancel'} }
   $fw='(?:перешли|переслать|пересылай)'
@@ -734,3 +746,24 @@ function Get-RepairedPSModulePath([string]$Path,[string]$PSHomeDir){
   $keep -join ';'
 }
 function Repair-PSModulePath{ if($PSVersionTable.PSEdition -ne 'Core'){ $env:PSModulePath=Get-RepairedPSModulePath $env:PSModulePath $PSHOME } }
+
+# ---------- Автоподтверждение запросов разрешения Antigravity (чистая логика, тестируется без окон) ----------
+# Жёсткий запрет: «always», «No», «Skip», «Cancel», «Reject», «Stop» никогда не выбираются и не нажимаются — даже если шаблон в настройках шире.
+$script:AutoAllowDenyRx='(?i)always|всегда|\bno\b|^\s*\d?[\s.)]*нет\b|skip|пропуст|deny|reject|отклон|cancel|отмен|stop|останов|abort|ctrl\+d'
+function Test-AutoAllowOption([string]$Text){ $t=(([string]$Text) -replace '\s+',' ').Trim(); [bool]($t -and $t.Length -le 120 -and $t -match $Cfg.AutoAllowOptionRx -and $t -notmatch $script:AutoAllowDenyRx) }
+function Test-AutoAllowSubmit([string]$Text){ $t=(([string]$Text) -replace '\s+',' ').Trim(); [bool]($t -and $t -match $Cfg.AutoAllowSubmitRx -and $t -notmatch $script:AutoAllowDenyRx) }
+# Из кандидатов @{el;rect} выбирает кнопку, ближайшую к варианту (ниже или на уровне него); $null — нет подходящей.
+function Select-NearestBelow($OptRect,$Cands){
+  $best=$null; $bd=[double]::MaxValue
+  foreach($c in @($Cands)){ if(-not $c -or -not $c.rect){ continue }
+    if($OptRect){ $dy=[double]$c.rect.T-[double]$OptRect.T; if($dy -lt -5){ continue } } else { $dy=0 }
+    if($dy -lt $bd){ $bd=$dy; $best=$c } }
+  $best
+}
+# Сохраняет одну настройку в relay_settings.json, не трогая остальные (атомарно). Нужна State.ps1 (Write-AtomicText).
+function Save-SettingValue([string]$Path,[string]$Key,$Value){
+  $h=[ordered]@{}
+  if(Test-Path -LiteralPath $Path){ $raw=[IO.File]::ReadAllText([IO.Path]::GetFullPath($Path),[Text.Encoding]::UTF8); if($raw.Trim()){ $h=ConvertTo-PlainHashtable ($raw | ConvertFrom-Json) } }
+  $h[$Key]=$Value
+  Write-AtomicText -Path $Path -Text ($h | ConvertTo-Json -Depth 10) -NoBackup
+}

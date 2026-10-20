@@ -49,7 +49,10 @@ $pnlBtn.Dock='Top'; $pnlBtn.AutoSize=$true; $pnlBtn.Padding=New-Object System.Wi
 function New-Btn($text){ $b=New-Object System.Windows.Forms.Button; $b.Text=$text; $b.AutoSize=$true; $b.Margin=New-Object System.Windows.Forms.Padding(3,2,3,2); $b }
 $btnStart=New-Btn 'Старт'; $btnPause=New-Btn 'Стоп'; $btnStop=New-Btn 'Выключить скрипт'; $btnLim=New-Btn 'Лимиты'; $btnStat=New-Btn 'Статус'
 $btnAcc=New-Btn 'Accept All'; $btnShot=New-Btn 'Скриншот'; $btnDir=New-Btn 'Открыть папку'
-$pnlBtn.Controls.AddRange(@($btnStart,$btnPause,$btnStop,$btnLim,$btnStat,$btnAcc,$btnShot,$btnDir))
+$chkAuto=New-Object System.Windows.Forms.CheckBox; $chkAuto.Text='Автоподтверждение запросов Antigravity'; $chkAuto.AutoSize=$true; $chkAuto.Margin=New-Object System.Windows.Forms.Padding(10,6,3,2)
+$chkAuto.Checked=[bool]$Cfg.AutoAllowPrompts
+try{ (New-Object System.Windows.Forms.ToolTip).SetToolTip($chkAuto,'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.') }catch{}
+$pnlBtn.Controls.AddRange(@($btnStart,$btnPause,$btnStop,$btnLim,$btnStat,$btnAcc,$btnShot,$btnDir,$chkAuto))
 
 $pnlCmd=New-Object System.Windows.Forms.Panel
 $pnlCmd.Dock='Bottom'; $pnlCmd.Height=40; $pnlCmd.Padding=New-Object System.Windows.Forms.Padding(8,6,8,6)
@@ -86,6 +89,7 @@ function Update-Status{
     $j=[IO.File]::ReadAllText($Cfg.StatusFile,[Text.Encoding]::UTF8) | ConvertFrom-Json; $v=Get-GuiStateView $j
     $lblState.Text=$v.State; $lblState.ForeColor=[System.Drawing.Color]::FromName($v.Color)
     $lblModel.Text=$v.Model; $lblFile.Text=$v.File; $lblLim.Text=$v.Limits; $lblAct.Text=$v.Action
+    if($null -ne $j.autoAllow -and ((Get-Date)-$script:chkAt).TotalSeconds -gt 5 -and $chkAuto.Checked -ne [bool]$j.autoAllow){ $script:chkSync=$true; $chkAuto.Checked=[bool]$j.autoAllow; $script:chkSync=$false }
   }catch{}
 }
 $timer=New-Object System.Windows.Forms.Timer; $timer.Interval=800
@@ -99,6 +103,13 @@ $btnStop.Add_Click({
 })
 $btnLim.Add_Click({ Send-Cmd 'лимиты' }); $btnStat.Add_Click({ Send-Cmd 'статус' }); $btnAcc.Add_Click({ Send-Cmd 'прими' }); $btnShot.Add_Click({ Send-Cmd 'скрин' })
 $btnDir.Add_Click({ Start-Process explorer.exe $dir })
+$script:chkSync=$false; $script:chkAt=[datetime]::MinValue
+$chkAuto.Add_CheckedChanged({
+  if($script:chkSync){ return }
+  $script:chkAt=Get-Date; $on=[bool]$chkAuto.Checked
+  try{ Save-SettingValue (Join-Path $dir 'relay_settings.json') 'AutoAllowPrompts' $on }catch{}
+  Send-Cmd $(if($on){'автоподтверждение вкл'}else{'автоподтверждение выкл'})
+})
 $doSend={ $t=$txtCmd.Text.Trim(); if($t){ Send-Cmd $t; $txtCmd.Clear() } }
 $btnSend.Add_Click($doSend)
 $txtCmd.Add_KeyDown({ if($_.KeyCode -eq 'Enter'){ $_.SuppressKeyPress=$true; & $doSend } })

@@ -39,6 +39,32 @@ $script:AgJs=@'
       const b=qa('button,[role="button"],a.monaco-button').filter(x=>vis(x)&&enabled(x)&&!isStop(x)).find(x=>re.test(txt(x).replace(/\s+/g,' ').trim())||re.test((x.getAttribute('aria-label')||'').trim()));
       if(!b) return false; b.click(); return true; }
     case 'body': return document.body?txt(document.body):'';
+    case 'allowPrompt': return (async()=>{
+      // Автоподтверждение: вариант «Yes, allow this time» + Submit в той же панели. Никогда — always / No / Skip / Cancel.
+      const ore=new RegExp(arg.opt,'i'), sre=new RegExp(arg.sub,'i'), deny=new RegExp(arg.deny,'i');
+      const norm=s=>((s||'')+'').replace(/\s+/g,' ').trim();
+      const subIn=root=>qa('button,[role="button"],a.monaco-button').filter(b=>root.contains(b)&&vis(b)&&!isStop(b)&&!deny.test(label(b))&&sre.test(norm(txt(b))||norm(b.getAttribute('aria-label'))));
+      const rowOf=p=>{ const cl=p.closest('label,button,li,[role="radio"],[role="option"],[role="menuitemradio"],[role="button"]'); return (cl&&norm(txt(cl)).length<=160&&!deny.test(norm(txt(cl))))?cl:p; };
+      // все видимые варианты; беру тот, у которого Submit ближе всего по дереву (не строку истории чата с тем же текстом)
+      const tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT); let n, best=null, seen=new Set();
+      while((n=tw.nextNode())){ if(!/allow|разреш/i.test(n.data)) continue; const p=n.parentElement; if(!p||seen.has(p)||!vis(p)) continue; seen.add(p);
+        const t=norm(n.data), pt=norm(txt(p));
+        if(!((t&&t.length<=120&&ore.test(t)&&!deny.test(t))||(pt.length<=120&&ore.test(pt)&&!deny.test(pt)))) continue;
+        const row=rowOf(p); let box=row, k=0; while(box&&k<=8&&!subIn(box).length){ box=box.parentElement; k++; }
+        if(box&&k<=8&&(!best||k<best.k)) best={row,box,k};
+        else if(!best) best={row,box:null,k:99}; }
+      if(!best) return { found:false };
+      const row=best.row, box=best.box;
+      if(!box) return { found:true, ok:false, why:'нет кнопки Submit рядом с вариантом' };
+      const title=(txt(box).split('\n').map(norm).find(x=>x)||'').slice(0,100);
+      const radio=row.querySelector('input[type="radio"]'); (radio||row).click();
+      await new Promise(r=>setTimeout(r,250));
+      const st=radio?radio.checked:(row.hasAttribute('aria-checked')?row.getAttribute('aria-checked')==='true':(row.hasAttribute('aria-selected')?row.getAttribute('aria-selected')==='true':null));
+      if(st===false) return { found:true, ok:false, why:'вариант не выбрался', title };
+      if(!box.isConnected) return { found:true, ok:true, opt:norm(txt(row)), title, note:'панель закрылась после выбора' };
+      const sb=subIn(box).find(enabled); if(!sb) return { found:true, ok:false, why:'Submit неактивна', title };
+      sb.click(); return { found:true, ok:true, opt:norm(txt(row)), title };
+    })();
   }
   throw new Error('unknown op '+op);
 })
@@ -84,6 +110,8 @@ function AgCdp-InputText($Conn){ [string](AgEval-Js 'inputText' -Conn $Conn) }
 function AgCdp-IsBusy{ [bool](AgEval-Js 'busy') }
 function AgCdp-HasButton([string]$Rx){ [bool]@(AgEval-Js 'buttons' @{ rx=$Rx }).Count }
 function AgCdp-ClickText([string]$Rx){ [bool](AgEval-Js 'clickText' @{ rx=$Rx }) }
+# Автоподтверждение через DOM (без фокуса): @{found;ok;opt;title;why}
+function AgCdp-AllowPrompt{ AgEval-Js 'allowPrompt' @{ opt=$Cfg.AutoAllowOptionRx; sub=$Cfg.AutoAllowSubmitRx; deny=($script:AutoAllowDenyRx -replace '^\(\?i\)','') } }
 # Отправка в чат агента. Те же гарантии, что у AgUia-Send: чужой/меняющийся текст — не трогаю; Enter — только когда наш текст в поле.
 function AgCdp-Send{
   param([Parameter(Mandatory)][string]$Text,[string]$Label='')

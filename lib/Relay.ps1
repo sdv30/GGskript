@@ -320,6 +320,7 @@ GGskript. Команды:
 • старт / продолжай (или /resume) — продолжить: сначала протокол запуска (окна, лимиты, модель, файлы, сверка чатов), потом работа
 • выключи скрипт (или /exit) — завершить процесс GGskript совсем (спрошу подтверждение); запустить снова — только ярлыком на ПК
 • прими (или /accept) — нажать «Accept all» в Antigravity
+• автоподтверждение вкл / выкл (или /autoallow on|off) — сам отвечать «Yes, allow this time» + Submit на запросы разрешения Antigravity (никогда «always» и «No»)
 • джемини: <текст> (или /gemini <текст>) — отправить текст в Gemini; блок Markdown из ответа передам в Antigravity
 • антигравити: <текст> (или /ag <текст>) — отправить текст младшей модели
 • передай ответ — передать ТОЛЬКО блок с подписью «Markdown» из последнего ответа Gemini; другие блоки (Python, Plaintext, Bash…) не беру никогда. Весь ответ целиком — только «передай весь ответ»
@@ -405,6 +406,7 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
                 [void](New-TgPrompt -Kind 'exit' -Text "Выключить GGskript совсем? Процесс завершится, и из Telegram его снова запустить будет НЕЛЬЗЯ — только ярлыком GGskript на ПК.`nЕсли нужно просто остановиться — «Стоп» (процесс останется и будет слушать Telegram)." -Buttons 'Да, выключить скрипт=yes|Нет=no' -TimeoutMin ([double]$Cfg.ShutdownConfirmMin) -ReplyTo $ReplyTo) }
     'resume'  { $wasP=$script:Paused; if($wasP){ Set-Pause $false 'команда' }; $qb=Quota-Blocked; if($qb){ Quota-Override; Tg-Send "▶️ Ок, игнорирую остановку по лимитам ($qb), пока не станет хуже ещё на $($Cfg.QuotaReWarnStep) пунктов." | Out-Null }
       if($script:LimitStop){ Resume-Work 'по команде' } elseif(-not $qb -and -not $wasP){ Tg-Send "▶️ Продолжаю работу. Следующий файл: $(if($n=Next-FileName){$n}else{'новых файлов пока нет'})" | Out-Null } }
+    'autoallow' { if($null -ne $c.on){ Set-AutoAllow ([bool]$c.on) $Source } else { Tg-Send "Автоподтверждение запросов Antigravity: $(if($Cfg.AutoAllowPrompts){'ВКЛ'}else{'выкл'}). Включить/выключить: «автоподтверждение вкл» / «автоподтверждение выкл»." | Out-Null } }
     'shot'    { try{ Send-Screenshot }catch{ Tg-Send "Не удалось сделать скриншот: $($_.Exception.Message)" | Out-Null } }
     'confirm' { if($Source -eq 'tg' -and $ReplyTo -and (Resolve-TextAnswer 'confirm' $ReplyTo)){ return }
       if(-not $script:PendingConfirm -and $Source -eq 'tg' -and (Resolve-TextAnswer 'confirm' 0)){ return }
@@ -606,7 +608,7 @@ function Check-AgQueue{
 # ---------- Pump / Nap ----------
 function Pump{ Poll-Tg; Sweep-TgPrompts; try{ Check-Shutdown }catch{ Log "Выключение: $($_.Exception.Message)" }; Read-CmdFile; Check-LocalControl; Write-Status; if($script:StopReq){ throw [GG.RelayStopException]::new() }
   if($script:Paused -and $script:AbortOnStop){ $script:AbortOnStop=$false; throw [GG.RelayPausedException]::new('СТОП — ожидание ответа Gemini прервано (после «Старт» протокол проверит чат)') }
-  Invoke-AuxDuringWait }
+  Invoke-AuxDuringWait; Invoke-AutoAllowTick }
 # Ожидание ответа Gemini, которое «Стоп» может прервать (пункт 25B). Внутри — только чтение окна Gemini.
 function Wait-GemAnswerStoppable($ctx){ $script:AbortOnStop=$true; try{ Gem-WaitAnswer $ctx } finally { $script:AbortOnStop=$false } }
 # AcceptAllDuringWait: во время долгого ожидания ответа Gemini нажимать Accept all (и смотреть очередь Antigravity).
@@ -617,6 +619,38 @@ function Invoke-AuxDuringWait{
   if($Cfg.AcceptAllEverySec -le 0 -or ((Get-Date)-$script:LastAuxDuringWait).TotalSeconds -lt $Cfg.AcceptAllEverySec){ return }
   $script:LastAuxDuringWait=Get-Date; $script:InAux=$true
   try{ try{ [void](Try-AcceptAll -Report) }catch{ Log "Accept all (во время ожидания): $($_.Exception.Message)" } } finally { $script:InAux=$false }
+}
+# ---------- Автоподтверждение запросов разрешения Antigravity ----------
+$script:LastAutoAllow=Get-Date; $script:InAutoAllow=$false; $script:AutoAllowWarn=@{ key=''; time=[datetime]::MinValue }
+function Set-AutoAllow([bool]$On,[string]$Source='pc'){
+  $Cfg.AutoAllowPrompts=$On
+  try{ Save-SettingValue $Cfg.SettingsFile 'AutoAllowPrompts' $On }catch{ Log "Автоподтверждение: не удалось сохранить в relay_settings.json ($($_.Exception.Message))" }
+  Log "Автоподтверждение запросов Antigravity: $(if($On){'ВКЛ'}else{'выкл'}) ($Source)"
+  Tg-Send "Автоподтверждение запросов Antigravity: $(if($On){'ВКЛ — отвечаю «Yes, allow this time» + Submit (никогда «always»/«No»)'}else{'выкл'})." | Out-Null
+  try{ Write-Status -Force }catch{}
+}
+function Try-AutoAllow{
+  if(-not $Cfg.AutoAllowPrompts){ return $false }
+  $r=$null
+  if($Cfg.AgTransport -eq 'cdp'){ try{ $r=AgCdp-AllowPrompt; if($r -and $r.ok){ $r.how='CDP, без фокуса' } }catch{ $r=$null } }
+  if(-not ($r -and $r.ok)){
+    $h=Ag-GetWindow
+    if($h){ try{ $u=AgUia-AllowPrompt $h; if($u.ok){ $u.how='UIA, без фокуса'; $r=$u } elseif($u.found -or -not $r){ $r=$u } }catch{ Log "Автоподтверждение (UIA): $($_.Exception.Message)" } }
+  }
+  if($r -and $r.ok){ Log "Автоподтверждение: «$(Format-Short ([string]$r.opt) 40)» + Submit ($($r.how))$(if($r.title){" — «$(Format-Short ([string]$r.title) 80)»"})"; return $true }
+  if($r -and $r.found){
+    $k=[string]$r.why
+    if($k -ne $script:AutoAllowWarn.key -or ((Get-Date)-$script:AutoAllowWarn.time).TotalMinutes -ge 10){ $script:AutoAllowWarn=@{ key=$k; time=Get-Date }; Log "Автоподтверждение: запрос виден, но не подтвердил — $k" }
+  }
+  $false
+}
+# Из Pump: и в простое, и во время ожидания Gemini. Не внутри операций с фокусом/буфером, не к зависшему окну, без повторного входа.
+function Invoke-AutoAllowTick{
+  if(-not $Cfg.AutoAllowPrompts -or $script:InAutoAllow -or [int]$script:FocusDepth -gt 0){ return }
+  if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return }
+  if(((Get-Date)-$script:LastAutoAllow).TotalSeconds -lt [Math]::Max(1,[double]$Cfg.AutoAllowEverySec)){ return }
+  $script:LastAutoAllow=Get-Date; $script:InAutoAllow=$true
+  try{ try{ [void](Try-AutoAllow) }catch{ Log "Автоподтверждение: $($_.Exception.Message)" } } finally { $script:InAutoAllow=$false }
 }
 function Nap($sec){ $end=(Get-Date).AddSeconds($sec); while((Get-Date) -lt $end){ Pump; $r=($end-(Get-Date)).TotalMilliseconds; if($r -gt 0){ Start-Sleep -Milliseconds ([int][Math]::Min(1000,$r)) } } }
 
@@ -670,7 +704,7 @@ function Write-Status([switch]$Force){
       resumeAt= if($script:AutoPlan){ Format-PlanTime $script:AutoPlan.at } else { '' }; resumeWhy= if($script:AutoPlan){ [string]$script:AutoPlan.why } else { '' }
       lastAction= if($script:LastAction){ $script:LastAction.ToString('HH:mm:ss') } else { '' }
       pending=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -in @('sent','answered','resend','stale') } | ForEach-Object { "$_ ($(Get-StageRu (Get-Stage $_)))" })
-      transport="Gemini=$($Cfg.GeminiTransport), AG=$($Cfg.AgTransport)"
+      transport="Gemini=$($Cfg.GeminiTransport), AG=$($Cfg.AgTransport)"; autoAllow=[bool]$Cfg.AutoAllowPrompts
       quotaTime= if($q){ [string]$q.time } else { '' }
       gwebCur= if($q -and $q.gweb){ $q.gweb.cur } else { $null }; gwebWk= if($q -and $q.gweb){ $q.gweb.wk } else { $null }
       gwebCurReset= if($q -and $q.gweb){ [string]$q.gweb.curReset } else { '' }; gwebWkReset= if($q -and $q.gweb){ [string]$q.gweb.wkReset } else { '' }
