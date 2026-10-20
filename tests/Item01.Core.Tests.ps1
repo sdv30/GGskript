@@ -6,7 +6,7 @@ Describe 'Пункт 1: настройки по умолчанию' -Tag Item01 
     $d.PollSec | Should -Be 3; $d.StableSec | Should -Be 3; $d.GeminiTitle | Should -Be 'Gemini'
     $d.GeminiInputX | Should -Be 0.75; $d.GeminiInputY | Should -Be 0.86; $d.GeminiTimeoutSec | Should -Be 900
     $d.GeminiQuietSec | Should -Be 8; $d.AgInputX | Should -Be 0.38; $d.AgInputY | Should -Be 0.93
-    $d.CodeBlockLang | Should -Be 'Markdown'; $d.CodeBlockPick | Should -Be 'last'; $d.ModelMustContain | Should -Be 'Argon'
+    $d.CodeBlockLang | Should -Be 'Markdown,XML'; $d.CodeBlockPick | Should -Be 'last'; $d.ModelMustContain | Should -Be 'Argon'
     $d.AcceptAllEverySec | Should -Be 12; $d.AgQueueWaitSec | Should -Be 30; $d.QuotaEveryMin | Should -Be 10
     $d.GeminiWebThreshold | Should -Be 90; $d.AgThreshold | Should -Be 10; $d.AgGroup | Should -Be 'Gemini Models'
     $d.IgnoreBefore | Should -Be '2026-10-18 00:00'

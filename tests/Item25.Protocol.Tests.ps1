@@ -269,6 +269,7 @@ Describe 'Пункт 25D: передаётся только блок с подп
       @{D='похожие подписи (Markdown2, md) — не Markdown';L=@('Markdown2','md','Markdown code');P='last';R=-1}) {
       param($D,$L,$P,$R) Select-CodeBlockIndex -Langs $L -Lang 'Markdown' -Pick $P | Should -Be $R
     }
+    It 'список подписей: Markdown и XML подходят, Python нет' { Select-CodeBlockIndex -Langs @('Python','XML','Bash') -Lang 'Markdown,XML' | Should -Be 1; Select-CodeBlockIndex -Langs @('Python','Bash') -Lang 'Markdown,XML' | Should -Be -1; Test-CodeLangMatch 'xml' 'Markdown, XML' | Should -BeTrue; Test-CodeLangMatch 'Plaintext' 'Markdown,XML' | Should -BeFalse }
     It 'пустая настройка CodeBlockLang НЕ означает «любой блок»' { Select-CodeBlockIndex -Langs @('Python','Plaintext') -Lang '' | Should -Be -1; Select-CodeBlockIndex -Langs @('Python','Markdown') -Lang '' | Should -Be 1 }
     It 'длинная «подпись» (это уже текст) — пустая' { Normalize-CodeLang ('x'*41) | Should -Be ''; Normalize-CodeLang '  Mark   down ' | Should -Be 'Mark down' }
   }

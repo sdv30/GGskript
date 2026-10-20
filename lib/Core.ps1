@@ -46,7 +46,7 @@ function Get-DefaultSettings{
     AgInputX         = 0.38
     AgInputY         = 0.93
     RetrySec         = 60
-    CodeBlockLang    = 'Markdown'
+    CodeBlockLang    = 'Markdown,XML'   # подписи подходящих блоков через запятую; Argon иногда подписывает задание из XML-тегов как XML
     CodeBlockPick    = 'last'
     ModelMustContain = 'Argon'
     ModelRecheckSec  = 60
@@ -443,11 +443,12 @@ function Normalize-CodeLang([string]$Label){
   if(-not $l){ return '' }; $l=([string]$l -replace '\s+',' ').Trim()
   if($l.Length -gt 40){ return '' }; $l
 }
-# Блок подходит, только если подпись (без учёта регистра и пробелов по краям) равна нужной. Пустая/нечитаемая подпись — НЕ Markdown.
+# Блок подходит, только если подпись (без учёта регистра и пробелов по краям) равна одной из нужных (список через запятую). Пустая/нечитаемая подпись — НЕ Markdown.
 # Пустой $Lang в настройках НЕ означает «любой блок»: всегда Markdown.
 function Test-CodeLangMatch([string]$Label,[string]$Lang){
-  $want=([string]$Lang).Trim(); if(-not $want){ $want='Markdown' }
-  $l=Normalize-CodeLang $Label; [bool]($l -and $l -ieq $want)
+  $want=@(([string]$Lang) -split '[,;|]' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); if(-not $want.Count){ $want=@('Markdown') }
+  $l=Normalize-CodeLang $Label; if(-not $l){ return $false }
+  foreach($w in $want){ if($l -ieq $w){ return $true } }; $false
 }
 function Select-CodeBlockIndex([string[]]$Langs,[string]$Lang,[string]$Pick='last'){
   $idx=@(); for($i=0;$i -lt @($Langs).Count;$i++){ if(Test-CodeLangMatch ([string]$Langs[$i]) $Lang){ $idx+=$i } }
