@@ -244,7 +244,7 @@ Describe 'Пункт 25C: «стоп» и «выключи скрипт»' -Tag 
     $r=Split-Path $PSScriptRoot -Parent
     [IO.File]::ReadAllText((Join-Path $r 'GGskript_exit.bat')) | Should -Match 'STOP'
     $g=[IO.File]::ReadAllText((Join-Path $r 'GGskript_gui.ps1'),[Text.Encoding]::UTF8)
-    $g | Should -Match "btnPause=New-Btn 'Стоп'"; $g | Should -Match "btnStop=New-Btn 'Выключить скрипт'"
+    $g | Should -Match "btnPause=New-Btn '⏸ Стоп'"; $g | Should -Match "miExit=Add-Mi '⛔ Выключить скрипт'"
     foreach($n in 'GGskript_pause.bat','GGskript_start.bat','GGskript_stop.bat'){ Test-Path (Join-Path $r $n) | Should -BeFalse }
   }
 }

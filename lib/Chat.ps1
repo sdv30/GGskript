@@ -140,6 +140,7 @@ function Send-NoCodePrompt([string]$Label,[string]$Model,[string]$FullPath,[stri
 }
 function Send-AnswerCopy([string]$Path,[string]$Label,[string]$Who='Gemini'){
   $t=Read-TextFile $Path
+  if($t -and $script:LogReplies){ Log ("📄 Ответ $Who на $($Label):`r`n"+(($t -replace "`r?`n","`r`n").TrimEnd())) }
   if(-not $t){ Tg-Send "Полный текст ответа на $Label не сохранён (не удалось скопировать в момент ответа), поэтому копию прислать не могу. «что ответил джемини» пришлёт текущий последний ответ из окна Gemini." | Out-Null; return }
   $parts=@(Split-TgParagraphs $t ($Cfg.TgMaxLen-120)); $k=$parts.Count; $lim=[Math]::Min($k,[int]$Cfg.TgCopyMaxMessages)
   for($i=0;$i -lt $lim;$i++){ $h= if($k -gt 1){ "📄 Ответ $Who на $Label ($($i+1)/$k):" } else { "📄 Ответ $Who на $($Label):" }; [void](Tg-SendMsg -Text "$h`n`n$($parts[$i])") }
@@ -210,12 +211,12 @@ function Send-GeminiManual([string]$Text,[switch]$SendCopy){
 }
 # «Antigravity: текст»: ответ агента — новый отчёт в Downloads после отправки; пришлём его копию в Telegram.
 $script:AgWatch=$null; $script:AgWatchLast=Get-Date
-function Start-AgWatch{ $script:AgWatch=@{ since=(Get-Date); known=@(Get-Files -All | ForEach-Object { $_.Name }); until=(Get-Date).AddMinutes([double]$Cfg.AgReplyWaitMin) } }
+function Start-AgWatch([string]$Src='tg'){ $script:AgWatch=@{ src=$Src; since=(Get-Date); known=@(Get-Files -All | ForEach-Object { $_.Name }); until=(Get-Date).AddMinutes([double]$Cfg.AgReplyWaitMin) } }
 function Check-AgWatch{
   if(-not $script:AgWatch -or ((Get-Date)-$script:AgWatchLast).TotalSeconds -lt 5){ return }; $script:AgWatchLast=Get-Date
   $w=$script:AgWatch
   $f=@(Get-Files -All | Where-Object { $w.known -notcontains $_.Name -and $_.LastWriteTime -ge $w.since.AddSeconds(-2) -and ((Get-Date)-$_.LastWriteTime).TotalSeconds -ge 3 }) | Select-Object -First 1
-  if($f){ $script:AgWatch=$null; Send-AnswerCopy $f.FullName $f.Name -Who 'Antigravity'; return }
+  if($f){ $script:AgWatch=$null; $prev=$script:LogReplies; if($w.src -eq 'pc'){ $script:LogReplies=$true }; try{ Send-AnswerCopy $f.FullName $f.Name -Who 'Antigravity' } finally { $script:LogReplies=$prev }; return }
   if((Get-Date) -gt $w.until){ $script:AgWatch=$null; Tg-Send "⌛ Antigravity за $($Cfg.AgReplyWaitMin) мин не прислал новый отчёт. Когда он появится, GGskript обработает его как обычно." | Out-Null }
 }
 function Invoke-ChatAction($c){
@@ -223,18 +224,23 @@ function Invoke-ChatAction($c){
     'gemask' { Send-GeminiManual $c.text -SendCopy; return }
     'agask' {
       Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag
-      Start-AgWatch; try{ Ag-Send -Text $c.text -Label 'текст из Telegram' }catch{ $script:AgWatch=$null; throw }
+      Start-AgWatch ([string]$c.src); try{ Ag-Send -Text $c.text -Label 'текст из Telegram' }catch{ $script:AgWatch=$null; throw }
       Log 'Текст из Telegram отправлен в Antigravity, жду отчёт агента'
       Tg-Send "🛠 <b>Отправлено в Antigravity</b> ($($c.text.Length) симв.)`nПришлю ответ агента, как только появится новый отчёт (до $($Cfg.AgReplyWaitMin) мин)." -Html | Out-Null
     }
     'fwdtext' {
       if($c.target -eq 'gemini'){ Send-GeminiManual $c.text; return }
       Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag
-      Ag-Send -Text $c.text -Label "$($c.what) (из Telegram)"
+      Ag-Send -Text $c.text -Label "$($c.what) (из $(if($c.src -eq 'pc'){'панели'}else{'Telegram'}))"
       $hh=Get-Hash8 $c.text; if($c.relay -or $c.file){ Add-RelayHash $script:St $hh $Cfg.HashKeep }
       if($c.file -and (Get-Stage $c.file) -eq 'nocode'){ Set-Stage $c.file 'relayed' $hh -Force; Log "$($c.file): ответ без блока передан в Antigravity по кнопке" }
       Save-State
       $msg="✅ Доставлено в Antigravity: $($c.what) ($($c.text.Length) симв., «$(Get-FirstLine $c.text)»)"; Log $msg; Tg-Send $msg | Out-Null
+    }
+    'fwdans-pc' {
+      $w=Get-WholeAnswer
+      if(-not $w.text){ Log 'Не удалось взять последний ответ Gemini — пересылать нечего.'; return }
+      Invoke-ChatAction @{ k='fwdtext'; target='ag'; text=$w.text; what="последний ответ Gemini целиком ($($w.via))"; src='pc' }
     }
     'fwdans-prep' {
       $w=Get-WholeAnswer

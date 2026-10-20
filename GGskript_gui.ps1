@@ -44,15 +44,77 @@ $lblState=New-Lbl 'Состояние: …'; $lblState.Font=New-Object System.Dr
 $lblModel=New-Lbl 'Модель: —'; $lblFile=New-Lbl 'Файл/этап: —'; $lblLim=New-Lbl 'Лимиты: —'; $lblAct=New-Lbl ''; $lblAct.ForeColor=[System.Drawing.Color]::Gray
 $pnlTop.Controls.AddRange(@($lblState,$lblModel,$lblFile,$lblLim,$lblAct))
 
-$pnlBtn=New-Object System.Windows.Forms.FlowLayoutPanel
-$pnlBtn.Dock='Top'; $pnlBtn.AutoSize=$true; $pnlBtn.Padding=New-Object System.Windows.Forms.Padding(8,6,8,6)
-function New-Btn($text){ $b=New-Object System.Windows.Forms.Button; $b.Text=$text; $b.AutoSize=$true; $b.Margin=New-Object System.Windows.Forms.Padding(3,2,3,2); $b }
-$btnStart=New-Btn 'Старт'; $btnPause=New-Btn 'Стоп'; $btnStop=New-Btn 'Выключить скрипт'; $btnLim=New-Btn 'Лимиты'; $btnStat=New-Btn 'Статус'
-$btnAcc=New-Btn 'Accept All'; $btnShot=New-Btn 'Скриншот'; $btnDir=New-Btn 'Открыть папку'
-$chkAuto=New-Object System.Windows.Forms.CheckBox; $chkAuto.Text='Автоподтверждение запросов Antigravity'; $chkAuto.AutoSize=$true; $chkAuto.Margin=New-Object System.Windows.Forms.Padding(10,6,3,2)
+# ---- кнопки: те же 11, что в Telegram, по группам; всё остальное — в меню «☰ Ещё» ----
+$btnFont=New-Object System.Drawing.Font('Segoe UI',9.75)
+$grpFont=New-Object System.Drawing.Font('Segoe UI',8.25,[System.Drawing.FontStyle]::Bold)
+$accent=[System.Drawing.Color]::FromArgb(0,95,184)
+$pnlBtn=New-Object System.Windows.Forms.TableLayoutPanel
+$pnlBtn.Dock='Top'; $pnlBtn.AutoSize=$true; $pnlBtn.ColumnCount=2; $pnlBtn.Padding=New-Object System.Windows.Forms.Padding(8,4,8,6)
+[void]$pnlBtn.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute,124)))
+[void]$pnlBtn.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent,100)))
+$tip=New-Object System.Windows.Forms.ToolTip
+$emoFont=New-Object System.Drawing.Font('Segoe UI Emoji',11)
+function New-IconBmp([string]$e,[System.Drawing.Color]$c=[System.Drawing.Color]::FromArgb(60,64,72)){
+  $e=$e.Replace([string][char]0xFE0F,""); $bm=New-Object System.Drawing.Bitmap(24,22); $g=[System.Drawing.Graphics]::FromImage($bm); $g.TextRenderingHint='AntiAliasGridFit'
+  $sf=New-Object System.Drawing.StringFormat; $sf.Alignment='Center'; $sf.LineAlignment='Center'
+  $g.DrawString($e,$emoFont,(New-Object System.Drawing.SolidBrush($c)),(New-Object System.Drawing.RectangleF(0,0,24,22)),$sf); $g.Dispose(); $bm
+}
+function New-Btn([string]$text,[string]$hint='',[int]$w=184){
+  $b=New-Object System.Windows.Forms.Button; $b.Font=$btnFont; $b.Size=New-Object System.Drawing.Size($w,32)
+  # Значок (эмодзи) рисуем отдельно шрифтом Segoe UI Emoji: обычный текст кнопки WinForms показывает их квадратиками.
+  if($text -match '^(\S+)\s+(.+)$' -and $matches[1] -cnotmatch '[A-Za-zА-Яа-яЁё]'){ $b.Text=$matches[2]; $b.Image=New-IconBmp $matches[1]; $b.ImageAlign='MiddleCenter'; $b.TextImageRelation='ImageBeforeText' } else { $b.Text=$text }
+  $b.Margin=New-Object System.Windows.Forms.Padding(3,2,3,2); $b.FlatStyle='Flat'; $b.UseVisualStyleBackColor=$false
+  $b.BackColor=[System.Drawing.Color]::White; $b.FlatAppearance.BorderColor=[System.Drawing.Color]::FromArgb(200,204,212)
+  $b.FlatAppearance.MouseOverBackColor=[System.Drawing.Color]::FromArgb(232,240,252); $b.Cursor=[System.Windows.Forms.Cursors]::Hand
+  if($hint){ $tip.SetToolTip($b,$hint) }; $b
+}
+function Add-BtnRow([string]$title,[object[]]$ctl){
+  $l=New-Object System.Windows.Forms.Label; $l.Text=$title; $l.Font=$grpFont; $l.ForeColor=[System.Drawing.Color]::FromArgb(110,116,128)
+  $l.AutoSize=$false; $l.Size=New-Object System.Drawing.Size(120,32); $l.TextAlign='MiddleLeft'; $l.Margin=New-Object System.Windows.Forms.Padding(0,2,0,2)
+  $f=New-Object System.Windows.Forms.FlowLayoutPanel; $f.AutoSize=$true; $f.WrapContents=$true; $f.Dock='Fill'; $f.Margin=New-Object System.Windows.Forms.Padding(0)
+  $f.Controls.AddRange($ctl); $r=$pnlBtn.RowCount; $pnlBtn.RowCount=$r+1
+  $pnlBtn.Controls.Add($l,0,$r); $pnlBtn.Controls.Add($f,1,$r)
+}
+$btnRep=New-Btn '📂 Отчёт в Gemini' 'Последний отчёт агента из Downloads снова в Gemini (спрошу подтверждение)'
+$btnFwd=New-Btn '📂 Ответ в Antigravity' 'Весь последний ответ Gemini в Antigravity (спрошу подтверждение)'
+$btnAgT=New-Btn '🛠 Antigravity: текст' 'Ввести текст → в Antigravity; ответом будет новый отчёт агента (покажу в журнале)'
+$btnGmT=New-Btn '✨ Gemini: текст' 'Ввести текст → в Gemini; ответ покажу в журнале'
+$btnAns=New-Btn '✨ Ответ Gemini' 'Показать последний ответ Gemini в журнале'
+$btnStat=New-Btn 'ℹ️ Статус' 'Подробный статус (в Telegram и журнал)'
+$btnPause=New-Btn '⏸ Стоп' 'Пауза: окна и лимиты не трогаю, слушаю Telegram'
+$btnStart=New-Btn '▶️ Старт' 'Запустить или продолжить работу'
+$btnShot=New-Btn '📸 Скрин' 'Снимок экрана в Telegram'
+$btnLim=New-Btn '📊 Лимиты' 'Проверить лимиты Gemini и Antigravity'
+$btnHelp=New-Btn '❓ Помощь' 'Список команд (в Telegram)'
+$btnMore=New-Btn '☰ Ещё ▾' 'Остальные команды'
+$btnStart.ForeColor=[System.Drawing.Color]::ForestGreen; $btnPause.ForeColor=[System.Drawing.Color]::DarkOrange; $btnMore.ForeColor=$accent
+$chkAuto=New-Object System.Windows.Forms.CheckBox; $chkAuto.Text='Автоподтверждение запросов Antigravity'; $chkAuto.Font=$btnFont; $chkAuto.AutoSize=$true; $chkAuto.Margin=New-Object System.Windows.Forms.Padding(6,8,3,2)
 $chkAuto.Checked=[bool]$Cfg.AutoAllowPrompts
-try{ (New-Object System.Windows.Forms.ToolTip).SetToolTip($chkAuto,'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.') }catch{}
-$pnlBtn.Controls.AddRange(@($btnStart,$btnPause,$btnStop,$btnLim,$btnStat,$btnAcc,$btnShot,$btnDir,$chkAuto))
+$tip.SetToolTip($chkAuto,'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.')
+Add-BtnRow 'ФАЙЛЫ' @($btnRep,$btnFwd)
+Add-BtnRow 'ТЕКСТ И ОТВЕТЫ' @($btnAgT,$btnGmT,$btnAns)
+Add-BtnRow 'УПРАВЛЕНИЕ' @($btnStat,$btnPause,$btnStart)
+Add-BtnRow 'ПРОЧЕЕ' @($btnShot,$btnLim,$btnHelp)
+Add-BtnRow '' @($btnMore,$chkAuto)
+
+# ---- меню «☰ Ещё» ----
+$menu=New-Object System.Windows.Forms.ContextMenuStrip; $menu.Font=$btnFont; $menu.ShowImageMargin=$false
+function Add-Mi([string]$text,[scriptblock]$act){ $i=New-Object System.Windows.Forms.ToolStripMenuItem($text); if($act){ $i.Add_Click($act) }; [void]$menu.Items.Add($i); $i }
+function Add-MHead([string]$text){ $i=New-Object System.Windows.Forms.ToolStripMenuItem($text); $i.Enabled=$false; $i.Font=$grpFont; [void]$menu.Items.Add($i) }
+function Add-MSep{ [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) }
+Add-MHead 'ANTIGRAVITY'
+[void](Add-Mi '✅ Принять «Accept all»' { Send-Cmd 'прими' })
+[void](Add-Mi '📨 Передать ответ (блок Markdown)' { Send-Cmd 'передай ответ' })
+[void](Add-Mi '⏩ Передать всё равно (совпавший ответ)' { Send-Cmd 'передай всё равно' })
+$miAuto=Add-Mi '☑ Автоподтверждение запросов' { $chkAuto.Checked=-not $chkAuto.Checked }
+Add-MSep; Add-MHead 'ОКНА И КОМПЬЮТЕР'
+[void](Add-Mi '🪟 Список авто-закрываемых окон' { Send-Cmd 'список окон' })
+[void](Add-Mi '🕑 Когда выключение компьютера' { Send-Cmd 'когда выключение' })
+[void](Add-Mi '🚫 Отменить выключение компьютера' { Send-Cmd 'отмени выключение' })
+Add-MSep; Add-MHead 'GGSKRIPT'
+[void](Add-Mi '📁 Открыть папку проекта' { Start-Process explorer.exe $dir })
+$miExit=Add-Mi '⛔ Выключить скрипт' $null; $miExit.ForeColor=[System.Drawing.Color]::Firebrick
+$menu.Add_Opening({ $miAuto.Text= if($chkAuto.Checked){ '☑ Автоподтверждение: ВКЛ' } else { '☐ Автоподтверждение: выкл' } })
 
 $pnlCmd=New-Object System.Windows.Forms.Panel
 $pnlCmd.Dock='Bottom'; $pnlCmd.Height=40; $pnlCmd.Padding=New-Object System.Windows.Forms.Padding(8,6,8,6)
@@ -95,14 +157,36 @@ function Update-Status{
 $timer=New-Object System.Windows.Forms.Timer; $timer.Interval=800
 $timer.Add_Tick({ Load-LogTail; Update-Status })
 
+# ---- ввод текста для «Gemini: текст» / «Antigravity: текст» ----
+function Show-TextInput([string]$title,[string]$hint){
+  $d=New-Object System.Windows.Forms.Form; $d.Text=$title; $d.Font=$btnFont; $d.StartPosition='CenterParent'; $d.Size=New-Object System.Drawing.Size(560,330)
+  $d.FormBorderStyle='FixedDialog'; $d.MaximizeBox=$false; $d.MinimizeBox=$false; $d.ShowInTaskbar=$false; $d.AutoScaleMode=[System.Windows.Forms.AutoScaleMode]::Dpi
+  $l=New-Object System.Windows.Forms.Label; $l.Text=$hint; $l.Dock='Top'; $l.Height=44; $l.Padding=New-Object System.Windows.Forms.Padding(10,8,10,0)
+  $t=New-Object System.Windows.Forms.TextBox; $t.Multiline=$true; $t.ScrollBars='Vertical'; $t.AcceptsReturn=$true; $t.Dock='Fill'; $t.Font=New-Object System.Drawing.Font('Segoe UI',10)
+  $p=New-Object System.Windows.Forms.FlowLayoutPanel; $p.Dock='Bottom'; $p.Height=46; $p.FlowDirection='RightToLeft'; $p.Padding=New-Object System.Windows.Forms.Padding(6)
+  $ok=New-Btn 'Отправить' '' 120; $ok.DialogResult='OK'; $ok.ForeColor=$accent; $no=New-Btn 'Отмена' '' 100; $no.DialogResult='Cancel'
+  $p.Controls.AddRange(@($ok,$no)); $box=New-Object System.Windows.Forms.Panel; $box.Dock='Fill'; $box.Padding=New-Object System.Windows.Forms.Padding(10,4,10,4); $box.Controls.Add($t)
+  $d.Controls.Add($box); $d.Controls.Add($p); $d.Controls.Add($l); $d.CancelButton=$no
+  $t.Add_KeyDown({ if($_.Control -and $_.KeyCode -eq 'Enter'){ $_.SuppressKeyPress=$true; $d.DialogResult='OK'; $d.Close() } })
+  $r=$d.ShowDialog($form); $txt=$t.Text; $d.Dispose()
+  if($r -eq 'OK' -and $txt.Trim()){ $txt } else { $null }
+}
+function Send-PcText([string]$k,[string]$text){ Send-Cmd ("/pc_$k b64:"+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text))) }
+function Confirm-Gui([string]$msg){ ([System.Windows.Forms.MessageBox]::Show($form,$msg,'GGskript',[System.Windows.Forms.MessageBoxButtons]::OKCancel,[System.Windows.Forms.MessageBoxIcon]::Question)) -eq 'OK' }
+
 $btnStart.Add_Click({ Remove-Item -LiteralPath $Cfg.PauseFile -EA 0; if(-not (Worker-Alive)){ Start-Worker } else { Send-Cmd 'старт' } })
 $btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{} })
-$btnStop.Add_Click({
-  $r=[System.Windows.Forms.MessageBox]::Show("Выключить GGskript (воркер) совсем? Из Telegram запустить снова будет нельзя — только кнопкой «Старт» здесь или ярлыком.`nЧтобы просто остановиться и слушать Telegram — кнопка «Стоп».",'GGskript',[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Warning)
+$miExit.Add_Click({
+  $r=[System.Windows.Forms.MessageBox]::Show($form,"Выключить GGskript (воркер) совсем? Из Telegram запустить снова будет нельзя — только кнопкой «Старт» здесь или ярлыком.`nЧтобы просто остановиться и слушать Telegram — кнопка «Стоп».",'GGskript',[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Warning)
   if($r -eq 'Yes'){ try{ New-Item -ItemType File $Cfg.StopFile -Force | Out-Null }catch{} }
 })
-$btnLim.Add_Click({ Send-Cmd 'лимиты' }); $btnStat.Add_Click({ Send-Cmd 'статус' }); $btnAcc.Add_Click({ Send-Cmd 'прими' }); $btnShot.Add_Click({ Send-Cmd 'скрин' })
-$btnDir.Add_Click({ Start-Process explorer.exe $dir })
+$btnLim.Add_Click({ Send-Cmd 'лимиты' }); $btnStat.Add_Click({ Send-Cmd 'статус' }); $btnShot.Add_Click({ Send-Cmd 'скрин' }); $btnHelp.Add_Click({ Send-Cmd 'помощь' })
+$btnAns.Add_Click({ Send-Cmd '/pc_answer' })
+$btnRep.Add_Click({ if(Confirm-Gui "Отправить в Gemini заново последний отчёт агента из Downloads?`nОтвет Gemini дальше пойдёт по обычным правилам."){ Send-Cmd '/pc_togemini' } })
+$btnFwd.Add_Click({ if(Confirm-Gui "Переслать в Antigravity ВЕСЬ последний ответ Gemini целиком (не только блок Markdown)?"){ Send-Cmd '/pc_toag' } })
+$btnGmT.Add_Click({ $t=Show-TextInput '✨ Gemini: текст' 'Текст для Gemini. Отправлю и покажу ответ в журнале. Ctrl+Enter — отправить.'; if($t){ Send-PcText 'gemask' $t } })
+$btnAgT.Add_Click({ $t=Show-TextInput '🛠 Antigravity: текст' 'Текст для агента Antigravity. Ответом будет его новый отчёт в Downloads — покажу в журнале. Ctrl+Enter — отправить.'; if($t){ Send-PcText 'agask' $t } })
+$btnMore.Add_Click({ $menu.Show($btnMore,(New-Object System.Drawing.Point(0,$btnMore.Height))) })
 $script:chkSync=$false; $script:chkAt=[datetime]::MinValue
 $chkAuto.Add_CheckedChanged({
   if($script:chkSync){ return }

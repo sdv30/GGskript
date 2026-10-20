@@ -427,7 +427,7 @@ $tail
 "@
 }
 # Пункт 25B/C: в режиме СТОП — никаких лимитов, модели и окон. Только Telegram/команды и таймер выключения ПК.
-$script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','fwdans','fwdans-prep','fwdtext','resendfile','gemask','agask')
+$script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','fwdans','fwdans-prep','fwdtext','resendfile','gemask','agask','fwdans-pc')
 function Get-StopRefusal([string]$K){ "⏹ Сейчас СТОП — окна не трогаю, команду ($K) не выполняю. Нажмите «Старт», потом повторите." }
 function Invoke-StoppedStep{
   $script:State='⏹ стоп — жду «Старт» (слушаю Telegram, окна не трогаю)'
@@ -450,6 +450,8 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
       [void](Ask-WhereToSend -Text $Text.Trim() -Kind 'where' -Target $aw.target); return
     }
   }
+  # Кнопки панели на ПК (/pc_…): подтверждение уже получено в окне панели, ответы — в журнал панели.
+  if($Source -eq 'pc' -and $Text -match '^\s*/pc_(\w+)(?:\s+(.*))?$'){ Invoke-PcButton $matches[1] ([string]$matches[2]); return }
   $c=Parse-Command -Text $Text -HasDialog ([bool]($script:Blk -and $script:Blk.key)) -Strict ([bool]$Cfg.StrictCommands)
   $c.src=$Source
   if($script:Paused -and $c.k -in $script:WindowKinds){ Log "Стоп: команда $($c.k) отклонена"; Tg-Send (Get-StopRefusal $c.k) | Out-Null; return }
@@ -536,6 +538,24 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
   }
 }
 function Run-Action($c){
+  $prev=$script:LogReplies; if($c.src -eq 'pc'){ $script:LogReplies=$true }
+  try{ Run-ActionCore $c } finally { $script:LogReplies=$prev }
+}
+# Кнопки панели: текст приходит как b64:<base64 UTF-8> (многострочный текст в одной строке commands.txt).
+function ConvertFrom-PcArg([string]$A){ $a=$A.Trim(); if($a -match '^b64:(.*)$'){ if(-not $matches[1]){ return '' }; try{ return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($matches[1])) }catch{ return '' } }; $a }
+function Invoke-PcButton([string]$K,[string]$Arg){
+  $k=$K.ToLower()
+  if($script:Paused -and $k -in 'gemask','agask','togemini','toag','answer'){ Log "Стоп: кнопка панели $k не выполнена — нажмите «Старт»"; return }
+  switch($k){
+    'gemask'   { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log 'Gemini: пустой текст — ничего не отправлено'; return }; $script:Queue.Enqueue(@{ k='gemask'; text=$t.Trim(); src='pc' }); Log "✨ Gemini: текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}) и покажу ответ здесь" }
+    'agask'    { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log 'Antigravity: пустой текст — ничего не отправлено'; return }; $script:Queue.Enqueue(@{ k='agask'; text=$t.Trim(); src='pc' }); Log "🛠 Antigravity: текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}); ответом будет новый отчёт агента" }
+    'togemini' { $f=@(Get-Files) | Select-Object -Last 1; if(-not $f){ Log 'В Downloads нет отчётов агента — пересылать нечего.'; return }; $script:Queue.Enqueue(@{ k='resendfile'; name=$f.Name; src='pc' }) }
+    'toag'     { $script:Queue.Enqueue(@{ k='fwdans-pc'; src='pc' }); Log '🕐 Беру последний ответ Gemini целиком для Antigravity…' }
+    'answer'   { $script:Queue.Enqueue(@{ k='lastanswer'; src='pc' }) }
+    default    { Log "Неизвестная кнопка панели: $K" }
+  }
+}
+function Run-ActionCore($c){
   switch($c.k){
     'limits' { Tg-Send ('📊 Лимиты, '+(Check-Quotas)) | Out-Null }
     'gemini' {
@@ -579,7 +599,7 @@ function Run-Action($c){
       Set-Stage $sf.Name 'resend'; $script:StaleNotified.Remove($sf.Name); Tg-Send "🔁 $($sf.Name) будет отправлен в Gemini заново." | Out-Null
     }
     'lastanswer' { $a=Gem-CopyWhole; if(!$a){ throw 'не нашёл ответ Gemini' }; $p=Save-FullAnswer ('last_'+(Get-Date).ToString('yyyyMMdd_HHmmss')+'.md') $a; if($p){ Send-AnswerCopy $p 'последнее сообщение' } else { Tg-Send "Последний ответ Gemini:`n`n$a" | Out-Null } }
-    { $_ -in 'fwdtext','fwdans-prep','resendfile','gemask','agask' } { Invoke-ChatAction $c }
+    { $_ -in 'fwdtext','fwdans-prep','resendfile','gemask','agask','fwdans-pc' } { Invoke-ChatAction $c }
     'accept' { if(Try-AcceptAll){ Tg-Send 'Нажал «Accept all».' | Out-Null } else { Tg-Send 'Кнопки «Accept all» в Antigravity сейчас нет.' | Out-Null } }
   }
 }
