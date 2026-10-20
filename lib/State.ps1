@@ -52,7 +52,7 @@ function Get-StageRu([string]$Stage){
 }
 function Test-StageTransition([string]$From,[string]$To){ if($null -eq $From){ $From='' }; ($script:StageTransitions.ContainsKey($From) -and (@($script:StageTransitions[$From]) -contains $To)) }
 
-function New-RelayState{ [ordered]@{ version=2; files=[ordered]@{}; hashes=@() } }
+function New-RelayState{ [ordered]@{ version=2; files=[ordered]@{}; hashes=@(); lastAgAt='' } }
 function Get-FileStage($State,[string]$Name){ if($State.files.Contains($Name)){ [string]$State.files[$Name].stage } else { '' } }
 function Set-FileStage{
   param([Parameter(Mandatory)]$State,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][string]$Stage,[string]$Hash,[string]$Note,[switch]$Force)
@@ -80,6 +80,7 @@ function Read-RelayState([string]$Path){
   $s=New-RelayState
   if($r.Data.files){ foreach($k in $r.Data.files.Keys){ $v=$r.Data.files[$k]; $s.files[$k]=[ordered]@{ stage=[string]$v.stage; time=[string]$v.time; hash=[string]$v.hash; attempts=[int]$v.attempts; note=[string]$v.note } } }
   if($r.Data.hashes){ $s.hashes=@($r.Data.hashes | ForEach-Object { [string]$_ }) }
+  if($r.Data.lastAgAt){ $s.lastAgAt=[string]$r.Data.lastAgAt }
   [pscustomobject]@{ State=$s; Source=$r.Source; Error=$r.Error }
 }
 # Чистка: удаляет только завершённые записи о файлах, которых уже НЕТ в папке, оставляя последние $Keep завершённых.
@@ -113,4 +114,25 @@ function Log([string]$m,[switch]$NoAction){
   $script:LogLines++
   if(($script:LogLines % 200) -eq 1){ try{ [void](Invoke-LogRotate -Path $Cfg.LogFile -MaxMB $Cfg.LogMaxMB -Keep $Cfg.LogKeep) }catch{} }
   for($i=0;$i -lt 3;$i++){ try{ [IO.File]::AppendAllText([IO.Path]::GetFullPath($Cfg.LogFile),$l+[Environment]::NewLine,(New-Object System.Text.UTF8Encoding $false)); return }catch{ Start-Sleep -Milliseconds 50 } }
+}
+
+# ---------- Пункт 34: чья очередь — по времени ----------
+function ConvertTo-StageTime([string]$t){ if(-not $t){ return $null }; try{ [datetime]::ParseExact($t,'yyyy-MM-dd HH:mm:ss',$null) }catch{ $null } }
+# Время последней вставки в Antigravity: явная отметка lastAgAt или самое позднее время этапа «relayed».
+function Get-LastAgRelayTime($State){
+  $best=ConvertTo-StageTime ([string]$State.lastAgAt)
+  foreach($k in @($State.files.Keys)){ $v=$State.files[$k]; if([string]$v.stage -eq 'relayed'){ $t=ConvertTo-StageTime ([string]$v.time); if($t -and (-not $best -or $t -gt $best)){ $best=$t } } }
+  $best
+}
+# Отчёт новее последней вставки в Antigravity (с запасом GraceSec) — значит, Antigravity уже отработал промпт и сейчас очередь Gemini.
+function Test-ReportNewerThanAg($State,[datetime]$FileTime,[int]$GraceSec=3){
+  $t=Get-LastAgRelayTime $State; if(-not $t){ return $true }
+  ($FileTime -gt $t.AddSeconds($GraceSec))
+}
+# Файл, уже обработанный (relayed/done/nocode), перезаписан ПОСЛЕ своего этапа — это новый отчёт под тем же именем.
+function Test-ReportRewritten($State,[string]$Name,[datetime]$FileTime,[int]$GraceSec=5){
+  if(-not $State.files.Contains($Name)){ return $false }
+  $v=$State.files[$Name]; if([string]$v.stage -notin @('relayed','done','nocode')){ return $false }
+  $t=ConvertTo-StageTime ([string]$v.time); if(-not $t){ return $false }
+  ($FileTime -gt $t.AddSeconds($GraceSec))
 }

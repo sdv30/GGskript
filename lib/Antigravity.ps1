@@ -205,6 +205,11 @@ $script:AgCdpDownSaid=$false
 $script:AgCdpDownUntil=$null
 function Ag-Send{
   param([Parameter(Mandatory)][string]$Text,[string]$Label='',[string]$Name)
+  Ag-SendCore -Text $Text -Label $Label -Name $Name
+  try{ if($script:St){ $script:St.lastAgAt=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Save-State } }catch{}
+}
+function Ag-SendCore{
+  param([Parameter(Mandatory)][string]$Text,[string]$Label='',[string]$Name)
   if($Cfg.AgTransport -eq 'mailbox'){ [void](AgMailbox-Send -Text $Text -Label $Label -Name $Name); return }
   if($Cfg.AgTransport -eq 'cdp' -and -not ($script:AgCdpDownUntil -and (Get-Date) -lt $script:AgCdpDownUntil -and $Cfg.AgCdpFallback)){
     try{

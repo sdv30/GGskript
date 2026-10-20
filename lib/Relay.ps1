@@ -44,7 +44,17 @@ function Get-Files([switch]$All){
     } | ForEach-Object { [pscustomobject]@{ Name=$_.Name; FullName=$_.FullName; LastWriteTime=$_.LastWriteTime; Key=(Get-SortKey $_.Name $Cfg.Pattern) } } |
     Sort-Object Key,LastWriteTime)
 }
-function Next-File{ @(Get-Files | Where-Object { -not (Is-Done $_.Name) -and -not $script:Held.ContainsKey($_.Name) }) | Select-Object -First 1 }
+function Reset-RewrittenReports{
+  foreach($f in @(Get-Files)){
+    if(Test-ReportRewritten $script:St $f.Name $f.LastWriteTime){
+      $old=$script:St.files[$f.Name]; Remove-FileStage $script:St $f.Name; Save-State; $script:Held.Remove($f.Name)
+      $msg="🔁 Очередь: $($f.Name) перезаписан в $($f.LastWriteTime.ToString('HH:mm:ss')) — после этапа «$(Get-StageRu ([string]$old.stage))» ($($old.time)). Antigravity написал новый отчёт → очередь Gemini, отправлю."
+      Log $msg; try{ Tg-Send $msg | Out-Null }catch{}
+    }
+  }
+}
+function Get-LastAgRelayTimeRu{ $t=Get-LastAgRelayTime $script:St; if($t){ $t.ToString('HH:mm:ss') } else { 'не было' } }
+function Next-File{ Reset-RewrittenReports; @(Get-Files | Where-Object { -not (Is-Done $_.Name) -and -not $script:Held.ContainsKey($_.Name) }) | Select-Object -First 1 }
 # ---------- Пункт 24: запуск без «хвоста» ----------
 # Самый новый файл: по времени изменения, при равенстве — по номеру NNN (ключ сортировки).
 function Get-NewestFile($Files){ @($Files | Sort-Object LastWriteTime,Key) | Select-Object -Last 1 }
@@ -55,6 +65,7 @@ function Get-NewerHandled($f){
 # План запуска: старые необработанные -> skipped; самый новый — виден в чате Gemini -> «отправлен» (жду/беру ответ),
 # не виден -> вопрос в Telegram (StartupAskNewest) или обычная отправка. -> @{ lines; skipped; newest; ask }
 function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoChat){
+  if(-not $DryRun){ Reset-RewrittenReports }
   $files=@(Get-Files); $out=@{ lines=@(); skipped=@(); newest=$null; ask=$null; pending=$false }
   if(-not $files.Count){ $out.lines+='   файлов отчётов нет — жду новый'; return $out }
   $nw=Get-NewestFile $files; $out.newest=$nw.Name
@@ -77,6 +88,8 @@ function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoCha
   if(-not $vis -and -not $NoChat -and $Cfg.MatchByContent){
     # пункт 27C: отправлен вручную — узнаю по содержимому (или по вложению с именем файла)
     $hit=Test-FileInGemini $nw
+    if($hit -and $hit.how -eq 'name' -and (Test-ReportNewerThanAg $script:St $nw.LastWriteTime)){
+      $out.lines+="   ⚖ очередь: $n ($($nw.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini не считаю отправкой (это упоминание в промпте), очередь Gemini"; $hit=$null }
     if($hit -and $hit.last){ $vis=$true; $how=$(if($hit.how -eq 'content'){' (узнал по содержимому — отправлен вручную)'}else{' (по имени файла во вложении)'}) }
     elseif($hit){
       if(-not $DryRun){ [void](Set-FileStage -State $script:St -Name $n -Stage 'skipped' -Note 'уже есть в чате Gemini (найден по содержимому), но не последним запросом — ответ автоматически не беру' -Force); Save-State }
@@ -259,6 +272,8 @@ function Process-File($next){
   if($st -eq '' -and $Cfg.MatchByContent){
     # пункт 27C: пользователь мог отправить файл в Gemini сам — не дублирую
     $hit=Test-FileInGemini $next
+    if($hit -and $hit.how -eq 'name' -and (Test-ReportNewerThanAg $script:St $next.LastWriteTime)){
+      Log "⚖ Очередь: $n ($($next.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini — это упоминание в промпте, а не отправка; очередь Gemini → отправляю"; $hit=$null }
     if($hit -and $hit.last){
       Set-Stage $n 'sent'; $st='sent'; $script:Adopted[$n]=$true
       $msg="ℹ️ [$(ProjOf $n)] $n уже есть в чате Gemini ($(if($hit.how -eq 'content'){'узнал по содержимому — отправлен вручную'}else{'вложение с именем файла'})) — повторно НЕ отправляю, жду и беру ответ"; Log $msg; Tg-Send $msg | Out-Null
