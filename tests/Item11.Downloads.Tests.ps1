@@ -47,8 +47,8 @@ Describe 'Пункт 11: Get-Files и Process-File' -Tag Item11 {
   }
   It 'файл не стабилизировался — в Gemini не отправляется, этап не меняется' {
     [IO.File]::WriteAllText((Join-Path $Cfg.Downloads 'P_2026-10-18_005.md'),'x')
-    Mock Wait-FileStable { throw 'Файл не стабилизировался' }; Mock Gem-Send {}; Mock Assert-CanSendGemini { 'Argon' }; Mock Gem-GetModel { 'Argon' }
+    Mock Wait-FileStable { throw 'Файл не стабилизировался' }; Mock Gem-SendFile {}; Mock Assert-CanSendGemini { 'Argon' }; Mock Gem-GetModel { 'Argon' }
     { Process-File (Get-Item (Join-Path $Cfg.Downloads 'P_2026-10-18_005.md')) } | Should -Throw
-    Should -Invoke Gem-Send -Times 0; Get-Stage 'P_2026-10-18_005.md' | Should -Be ''
+    Should -Invoke Gem-SendFile -Times 0; Get-Stage 'P_2026-10-18_005.md' | Should -Be ''
   }
 }

@@ -10,7 +10,7 @@ Describe 'Пункт 7: stale вместо бесконечного повтор
     Mock Log {}; Mock Tg-Send { $true }; Mock Save-State {}
     Mock Wait-FileStable {}
     Mock Gem-GetModel { 'Argon Ultra' }
-    Mock Gem-Send { @{ before=1; pBefore=1; via='uia' } }
+    Mock Gem-SendFile { @{ before=1; pBefore=1; via='uia' } }
     Mock Gem-WaitAnswer { 1 }
     Mock Gem-CountPrompts { 2 }
     Mock Gem-LastReportPrompt { $null }
@@ -53,7 +53,7 @@ Describe 'Пункт 7: stale вместо бесконечного повтор
     Get-Stage 'A_2026-10-18_004.md' | Should -Be 'resend'
     $script:answer="## Задача`nновое"
     Process-File $f
-    Should -Invoke Gem-Send -Times 2 -Exactly
+    Should -Invoke Gem-SendFile -Times 2 -Exactly
     Get-Stage 'A_2026-10-18_004.md' | Should -Be 'relayed'
   }
   It 'stale блокирует очередь (следующие файлы не обгоняют), Next-File указывает на stale-файл' {

@@ -43,6 +43,8 @@ function Gem-CopyCode{
   if(-not $code -and $Cfg.CodeFromWholeFallback){ $w=Gem-CopyWhole; if($w){ $code=Get-MarkdownBlock $w $Cfg.CodeBlockLang $Cfg.CodeBlockPick; if($code){ Log 'Блок Markdown найден в тексте всего ответа (CodeFromWholeFallback)' } } }
   $code
 }
+# Отчёт — ТОЛЬКО вложением через «+» (поле ввода пустое), без вставки текста. Не удалось прикрепить — ошибка, текст не вставляю.
+function Gem-SendFile([string]$Path,[string]$Name){ Use-GemTransport 'отправка файла' { GemUia-SendFile $Path $Name } { GemCdp-SendFile $Path $Name } -Send }
 function Gem-IsGenerating{ Use-GemTransport 'генерация' { GemUia-IsGenerating (Gem-UiaWindow) } { [bool](Eval-Js 'state').gen } }
 # Только чтение (без кликов и буфера): есть ли ответ после последнего запроса, подписи блоков, текст блока Markdown (если читается).
 function Gem-PeekAnswer{ Use-GemTransport 'ответ (чтение)' { GemUia-PeekAnswer (Gem-UiaWindow) } { GemCdp-PeekAnswer } }

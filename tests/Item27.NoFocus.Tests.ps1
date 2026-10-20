@@ -73,7 +73,7 @@ Describe 'Пункт 27C: запуск и обычная работа узнаю
   }
   Context 'Process-File' {
     BeforeEach {
-      $script:GemSent=0; Mock Gem-Send { $script:GemSent++; @{ pBefore=1 } }
+      $script:GemSent=0; Mock Gem-Send { $script:GemSent++; @{ pBefore=1 } }; Mock Gem-SendFile { $script:GemSent++; @{ pBefore=1 } }
       Mock Wait-FileStable {}; Mock Assert-CanSendGemini { 'Argon' }; Mock Wait-GemAnswerStoppable {}; Mock Get-ModelNow { 'Argon' }
       Mock Check-OurPrompt {}; Mock Gem-LastReportPrompt { 'MyProject_2026-10-18_003.md' }
       Mock Gem-CopyCode { "текст для агента" }; Mock Finish-Answered {}; Mock Relay-ToAg {}; Mock Ag-HasText { $false }

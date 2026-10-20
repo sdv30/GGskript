@@ -26,7 +26,7 @@ Describe 'Пункт 24: запуск без «хвоста» — только �
     Mock Invoke-Tg { [void]$script:TgCalls.Add(@{ m=$Method; b=$Body }); if($Method -eq 'sendMessage'){ $script:MsgId++; @{ ok=$true; result=@{ message_id=$script:MsgId } } } else { @{ ok=$true; result=$true } } }
     Mock Gem-IsReady { $true }; Mock Ag-GetWindow { [IntPtr]1 }; Mock AgUia-FindInput { $true }; Mock Get-ModelNow { 'Argon Ultra' }
     Mock Gem-LastReportPrompt { $script:LP }
-    Mock Gem-Send { [void]$script:GemSent.Add($Text); @{ pBefore=1 } }
+    Mock Gem-SendFile { [void]$script:GemSent.Add($Name); @{ pBefore=1 } }
     Mock Ag-Send { [void]$script:AgSent.Add($Text) }
     Mock Wait-FileStable {}; Mock Assert-CanSendGemini { 'Argon Ultra' }; Mock Gem-WaitAnswer {}; Mock Check-OurPrompt {}
     Mock Gem-CopyCode { "``````markdown`nответ для агента $(Get-Random)`n``````" }

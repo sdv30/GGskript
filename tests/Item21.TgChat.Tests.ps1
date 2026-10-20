@@ -70,7 +70,7 @@ Describe 'Пункт 21: Telegram — кнопки, копия ответа, п�
     BeforeEach {
       $script:St=New-RelayState; $script:QStopG=$false; $script:QStopA=$false; $script:LimitStop=$false; $script:StaleNotified=@{}
       $script:whole="Я не могу продолжить без решения.`n`nВариант 1: ...`n`nВариант 2: ..."
-      Mock Save-State {}; Mock Wait-FileStable {}; Mock Gem-GetModel { 'Argon Высокая' }; Mock Gem-Send { @{ before=1; pBefore=1 } }; Mock Gem-WaitAnswer { 1 }
+      Mock Save-State {}; Mock Wait-FileStable {}; Mock Gem-GetModel { 'Argon Высокая' }; Mock Gem-Send { @{ before=1; pBefore=1 } }; Mock Gem-SendFile { @{ before=1; pBefore=1 } }; Mock Gem-WaitAnswer { 1 }
       Mock Gem-CountPrompts { 2 }; Mock Gem-LastReportPrompt { $null }; Mock Gem-CopyCode { $null }; Mock Gem-CopyWhole { $script:whole }; Mock Ag-Send {}
       Get-ChildItem $Cfg.Downloads | Remove-Item -Force
     }
@@ -303,7 +303,7 @@ Describe 'Пункт 21: Telegram — кнопки, копия ответа, п�
       $f=New-Report 'A_2026-10-18_002.md' 'Отчёт агента: сделал задачу 2'
       [void](Set-FileStage $script:St $f.Name 'sent'); [void](Set-FileStage $script:St $f.Name 'relayed')
       Handle-Command 'перешли ответ в Gemini' 'tg'
-      $p=LastPrompt; $p.text | Should -BeLike '*в Gemini заново уйдёт последний отчёт агента Antigravity — файл A_2026-10-18_002.md из Downloads*«Файл отчёта: A_2026-10-18_002.md» + содержимое*Отчёт агента: сделал задачу 2*'
+      $p=LastPrompt; $p.text | Should -BeLike '*в Gemini заново уйдёт последний отчёт агента Antigravity — файл A_2026-10-18_002.md из Downloads*только файлом-вложением через «+», без текста в поле*Отчёт агента: сделал задачу 2*'
       Press $p 'send'; Run-Action $script:Queue.Dequeue()
       Get-Stage $f.Name | Should -Be 'resend'; (Next-File).Name | Should -Be $f.Name
     }
@@ -315,7 +315,7 @@ Describe 'Пункт 21: Telegram — кнопки, копия ответа, п�
   Context 'ручной текст в Gemini: учёт этапов' {
     BeforeEach {
       $script:St=New-RelayState; $script:QStopG=$false; $script:QStopA=$false; Mock Save-State {}
-      Mock Gem-GetModel { 'Argon Высокая' }; Mock Gem-Send { @{ before=1; pBefore=1 } }; Mock Gem-WaitAnswer { 1 }; Mock Gem-CountPrompts { 2 }
+      Mock Gem-GetModel { 'Argon Высокая' }; Mock Gem-Send { @{ before=1; pBefore=1 } }; Mock Gem-SendFile { @{ before=1; pBefore=1 } }; Mock Gem-WaitAnswer { 1 }; Mock Gem-CountPrompts { 2 }
       Mock Gem-CopyWhole { "Ответ`n``````markdown`n## Задача`n``````" }; Mock Ag-Send {}
     }
     It 'в ответе есть блок — спрашивает «Переслать блок в Antigravity?»; «Да» — пересылает блок' {

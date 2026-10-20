@@ -13,7 +13,7 @@ Describe 'Пункт 35: автоматический поток решает с
     $p=Join-Path $Cfg.Downloads 'Arena_2026-10-20_003.md'; [IO.File]::WriteAllText($p,$script:Txt)
     (Get-Item $p).LastWriteTime=[datetime]'2026-10-20 22:34:47'; $script:F=Get-Item $p
     $Cfg.AutoDecide=$true; $Cfg.StartupAskNewest=$true; $Cfg.AutoSendGraceSec=60; $Cfg.MatchByContent=$true; $Cfg.StartupNewestOnly=$true
-    $script:GemSent=0; Mock Gem-Send { $script:GemSent++; @{ pBefore=1 } }
+    $script:GemSent=0; Mock Gem-SendFile { $script:GemSent++; @{ pBefore=1 } }
     Mock Wait-FileStable {}; Mock Assert-CanSendGemini { 'Argon' }; Mock Wait-GemAnswerStoppable {}; Mock Get-ModelNow { 'Argon' }
     Mock Check-OurPrompt {}; Mock Gem-LastReportPrompt { 'Arena_2026-10-20_003.md' }; Mock Wait-AnswerAfterLastPrompt {}
     Mock Gem-CopyCode { 'текст для агента' }; Mock Finish-Answered {}; Mock Relay-ToAg {}; Mock Ag-HasText { $false }

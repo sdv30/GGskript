@@ -297,9 +297,10 @@ function Process-File($next){
     $script:State="обрабатываю $n"
     Log "Новый файл: $n (проект: $(ProjOf $n))$(if($st -eq 'resend'){' (повторная отправка)'})"
     Wait-FileStable $next.FullName
-    $txt="Файл отчёта: $n`r`n`r`n" + [IO.File]::ReadAllText($next.FullName,[Text.Encoding]::UTF8)
     $m=Assert-CanSendGemini "Файл $n НЕ отправлен и остаётся в очереди;"
-    $ctx=Gem-Send $txt "Файл отчёта: $n"; $pBefore=[int]$ctx.pBefore
+    try{ $ctx=Gem-SendFile $next.FullName $n }
+    catch{ if((Get-ErrorKind $_) -eq 'notsent'){ $em="❌ [$(ProjOf $n)] $n НЕ отправлен в Gemini: не удалось прикрепить файл ($($_.Exception.Message)). Текст в поле не вставляю; повторю позже."; Log $em; Tg-Send $em | Out-Null }; throw }
+    $pBefore=[int]$ctx.pBefore
     Set-Stage $n 'sent'
     Tg-Send "📤 [$(ProjOf $n)] Файл $n отправлен в Gemini (модель: $m)" | Out-Null
   } else { Log "Повтор: $n уже отправлен в Gemini (этап «отправлен»), повторно не отправляю — забираю ответ" }
@@ -906,7 +907,7 @@ function Start-Procedure([switch]$DryRun){
   $rep+='5) Сверка чатов:'
   $rep+="   Gemini: последний отчёт в чате — $(if($lp){$lp}else{'не найден'})"
   if(-not $n){ $rep+='👉 Ход: ничей — файлов нет, слежу за папкой'; Send-StartReport $rep -DryRun:$DryRun; return $true }
-  if($lp -and $lp -ne $n -and (Get-SortKey $lp $Cfg.Pattern) -gt (Get-SortKey $n $Cfg.Pattern)){
+  if($lp -and $lp -ne $n -and (ProjOf $lp) -eq (ProjOf $n) -and (Get-SortKey $lp $Cfg.Pattern) -gt (Get-SortKey $n $Cfg.Pattern)){
     # противоречие: в Gemini уже более новый отчёт, чем есть в Downloads
     $rep+="   ⚠️ противоречие: в Gemini последний отчёт $lp, а в Downloads самый новый — $n"
     if($Cfg.AutoDecide){
@@ -1237,6 +1238,47 @@ function Report-AgBlock($Ex,[string]$File){
 
 # ---------- Один шаг главного цикла (вынесен для тестов) ----------
 # Возвращает 'stop' — выйти из цикла, 'continue' — сразу следующая итерация, 'ok'.
+# ---------- Пункт 36: наблюдатель-зеркало (Gemini -> Antigravity) без привязки к этапам файлов ----------
+# Номер отчёта NNN, на который ссылается ответ (первая строка вида «[S004] [REWORK S003]» или «…_003.md»).
+function Test-AnswerRefersTo([string]$Answer,[string]$Name){
+  $m=[regex]::Match($Name,$Cfg.Pattern); if(-not $m.Success){ return $false }
+  $num=[int]$m.Groups['n'].Value; $head=(([string]$Answer) -split "`r?`n" | Select-Object -First 5) -join ' '
+  if($head.Contains($Name)){ return $true }
+  foreach($x in [regex]::Matches($head,'(?i)(?:S|REWORK\s*S|_)0*(\d{1,4})\b')){ if([int]$x.Groups[1].Value -eq $num){ return $true } }
+  $false
+}
+# Отчёт, к которому отнести ответ: самый новый файл, ещё не «relayed» (пропущен/отправлен вручную/в работе).
+function Get-MirrorTarget{ $f=Get-NewestFile @(Get-Files -All); if($f -and (Get-Stage $f.Name) -ne 'relayed'){ $f.Name } else { $null } }
+function Invoke-MirrorGemini([switch]$Force){
+  if(-not $Cfg.MirrorRelay -or $script:Paused -or $script:LimitStop -or (Quota-Blocked)){ return $false }
+  if(-not $Force -and $script:LastMirror -and ((Get-Date)-$script:LastMirror).TotalSeconds -lt $Cfg.MirrorEverySec){ return $false }
+  $script:LastMirror=Get-Date
+  if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return $false }
+  $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{ return $false }
+  if($gen){ $script:MirrorSeen=$null; return $false }
+  $pk=$null; try{ $pk=Gem-PeekAnswer }catch{ return $false }
+  if(-not $pk -or -not $pk.answered -or -not $pk.md){ $script:MirrorSeen=$null; return $false }
+  $peekKey= if($pk.code){ Get-Hash8 $pk.code } else { 'md:' + (@($pk.labels) -join ',') }
+  if($pk.code -and (Test-RelayHash $script:St $peekKey)){ $script:MirrorSeen=$null; return $false }
+  # два одинаковых чтения подряд — ответ дописан и стабилен
+  if($script:MirrorSeen -ne $peekKey){ $script:MirrorSeen=$peekKey; return $false }
+  $m2=Get-ModelNow; if(-not (Is-Argon $m2)){ return $false }
+  $ans=Gem-CopyCode; if(-not $ans){ return $false }
+  $hh=Get-Hash8 $ans
+  if(Test-RelayHash $script:St $hh){ $script:MirrorSeen=$null; return $false }
+  $n=Get-MirrorTarget
+  if(Ag-HasText $ans){
+    Add-RelayHash $script:St $hh $Cfg.HashKeep; if($n){ [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: уже был в Antigravity' -Force) }; Save-State
+    Log "🔭 Наблюдатель: блок Markdown (хэш $hh) уже есть в Antigravity — отметил как переданный"; $script:MirrorSeen=$null; return $false
+  }
+  [void](Assert-AgReady)
+  Ag-Send -Text $ans -Label 'ответ Gemini (наблюдатель)' -Name $n
+  Add-RelayHash $script:St $hh $Cfg.HashKeep
+  if($n){ $script:Held.Remove($n); [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: ответ Gemini передан' -Force); Mark-Done $n }
+  Save-State; $script:MirrorSeen=$null; [void](Play-Sound 'info')
+  $msg="🔭 Наблюдатель: в Gemini новый блок Markdown (модель $m2, $($ans.Length) симв., хэш $hh, «$(Get-FirstLine $ans)»)$(if($n){" — ответ на $n"}) — передал в Antigravity"
+  Log $msg; Tg-Send $msg | Out-Null; $true
+}
 function Invoke-MainStep{
   try{
     Pump
@@ -1280,7 +1322,16 @@ function Invoke-MainStep{
     else{
       $script:State='слежу за папкой Downloads, жду новый отчёт'
       $next=Next-File
+      # ответ Gemini, относящийся к ожидающему отчёту (отправлен вручную) — сначала зеркало, иначе отчёт уйдёт повторно
+      $pre=$false; if($next -and $Cfg.MirrorRelay){ try{ $pre=(Get-Stage $next.Name) -in @('','resend') }catch{} }
+      if($pre){
+        $pk=$null; try{ if(-not (Gem-IsGenerating)){ $pk=Gem-PeekAnswer } }catch{}
+        if($pk -and $pk.answered -and $pk.md -and $pk.code -and -not (Test-RelayHash $script:St (Get-Hash8 $pk.code)) -and (Test-AnswerRefersTo $pk.code $next.Name)){
+          $script:Busy=$true; try{ $script:MirrorSeen= Get-Hash8 $pk.code; if(Invoke-MirrorGemini -Force){ return 'continue' } } finally { $script:Busy=$false }
+        }
+      }
       if($next){ $script:Busy=$true; try{ Process-File $next } finally { $script:Busy=$false } }
+      elseif($Cfg.MirrorRelay){ $script:Busy=$true; try{ [void](Invoke-MirrorGemini) }catch{ if((Get-ErrorKind $_) -eq 'stop'){ throw }; Log "Наблюдатель: $($_.Exception.Message)" } finally { $script:Busy=$false } }
     }
   }catch{
     $script:Busy=$false

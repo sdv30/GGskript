@@ -38,7 +38,7 @@ Describe 'Пункт 25A: протокол запуска' -Tag Item25,Item25A {
     Mock Check-Quotas { $script:Q=@{ time='08:50' }; 'ok' }; Mock Quota-Text { 'в норме' }; Mock Update-AutoPlan {}
     Mock Gem-IsGenerating { $false }; Mock Get-AgHealth { @{ ok=$true; kind='ok'; reasons=@() } }; Mock Find-QueuedItems { @() }
     Mock Gem-LastReportPrompt { $script:LP }; Mock Gem-PeekAnswer { $script:PK }; Mock Ag-HasText { $script:InAg }
-    Mock Gem-Send { [void]$script:GemSent.Add($Text); @{ pBefore=1 } }; Mock Ag-Send { [void]$script:AgSent.Add($Text) }
+    Mock Gem-Send { [void]$script:GemSent.Add($Text); @{ pBefore=1 } }; Mock Gem-SendFile { [void]$script:GemSent.Add($Name); @{ pBefore=1 } }; Mock Ag-Send { [void]$script:AgSent.Add($Text) }
   }
   It 'нет окна Gemini — дальше шага 1 не иду: ни лимитов, ни модели, ни чатов; повтор не дублирует сообщение' {
     Mock Gem-IsReady { $false }
@@ -137,7 +137,7 @@ Describe 'Пункт 25B: в режиме СТОП — никаких прове
     Mock Invoke-Tg { [void]$script:TgCalls.Add(@{ m=$Method; b=$Body }); if($Method -eq 'sendMessage'){ $script:MsgId++; @{ ok=$true; result=@{ message_id=$script:MsgId } } } else { @{ ok=$true; result=$true } } }
     Mock Poll-Tg {}; Mock Sweep-TgPrompts {}; Mock Read-CmdFile {}; Mock Check-LocalControl {}; Mock Write-Status {}; Mock Check-Shutdown {}; Mock Nap {}
     Mock Check-Quotas { 'x' }; Mock Get-ModelNow { 'Argon' }; Mock Check-Blocking {}; Mock Try-AcceptAll { $false }; Mock Check-AgQueue {}; Mock Start-Procedure { $true }
-    Mock Process-File {}; Mock Gem-IsReady { $true }; Mock Gem-CopyCode { 'x' }; Mock Ag-Send {}; Mock Gem-Send {}; Mock Invoke-AutoResume { $true }; Mock Send-Screenshot {}
+    Mock Process-File {}; Mock Gem-IsReady { $true }; Mock Gem-CopyCode { 'x' }; Mock Ag-Send {}; Mock Gem-Send {}; Mock Gem-SendFile {}; Mock Invoke-AutoResume { $true }; Mock Send-Screenshot {}
     $script:Paused=$true
   }
   It 'шаг главного цикла на СТОП: лимиты, модель, окна, Accept all, очередь, протокол — ни одного вызова; таймер выключения работает' {

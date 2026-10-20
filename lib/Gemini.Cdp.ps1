@@ -6,6 +6,8 @@
 
 $script:CdpSelDefault=[ordered]@{
   input      = 'rich-textarea .ql-editor, div.ql-editor[contenteditable="true"]'
+  upload     = 'button[aria-label*="upload" i], button[aria-label*="загруз" i], button[aria-label*="Add files" i], button[aria-label*="Добавить файл" i], uploader button'
+  uploadItem = '[data-test-id="local-images-files-uploader-button"], [role="menuitem"]'
   send       = 'button.send-button, button[aria-label*="Send message"], button[aria-label*="Отправить"]'
   stop       = 'button[aria-label*="Stop response"], button[aria-label*="Остановить"], button.send-button.stop'
   prompt     = 'user-query'
@@ -55,6 +57,10 @@ $script:GemJs=@'
     case 'focusClear': { const e=q(S.input); if(!e) return false; e.focus();
       if(txt(e).length){ document.execCommand('selectAll',false,null); document.execCommand('delete',false,null); }
       return document.activeElement===e||e.contains(document.activeElement); }
+    case 'chips': return qa('.attachment-preview-wrapper, uploader-file-preview, [data-test-id="file-preview"]').map(e=>((e.getAttribute('aria-label')||'')+' '+txt(e)).trim());
+    case 'openUpload': { const b=qa(S.upload).filter(vis).pop(); if(!b) return 'nobtn'; b.click(); return 'ok'; }
+    case 'clickUploadItem': { const it=qa(S.uploadItem).filter(vis).find(x=>/upload|загруз|файл|file/i.test(txt(x)+' '+(x.getAttribute('aria-label')||''))); if(!it) return false; it.click(); return true; }
+    case 'sendEnabled': { return qa(S.send).some(x=>vis(x)&&!x.disabled&&x.getAttribute('aria-disabled')!=='true'); }
     case 'clickSend': { const b=qa(S.send).find(x=>vis(x)&&!x.disabled&&x.getAttribute('aria-disabled')!=='true'); if(!b) return false; b.click(); return true; }
     case 'state': { const r=last(); const t=r?txt(r):''; return {gen:qa(S.stop).some(vis), n:qa(S.response).length, len:t.length, tail:t.slice(-400)}; }
     case 'codes': { const r=last(); if(!r) return []; return Array.from(r.querySelectorAll(S.codeBlock)).map(b=>({lang:langOf(b), code:codeOf(b)})); }
@@ -189,6 +195,37 @@ function GemCdp-Send([string]$Text,[string]$Marker){
     try{ if([int](Eval-Js 'prompts' -Conn $c) -gt $pBefore -or -not ([string](Eval-Js 'inputText' -Conn $c)).Trim()){ Log "Отправлено в Gemini (CDP), $($Text.Length) симв."; return @{ before=$before; pBefore=$pBefore; via='cdp' } } }catch{}
   }
   throw 'Gemini/CDP: после нажатия «Отправить» запрос в чате не появился — проверьте вкладку (повторно не отправляю)'
+}
+# Вложение через «+»: перехват диалога выбора файла (Page.setInterceptFileChooserDialog) и DOM.setFileInputFiles; поле ввода пустое.
+function GemCdp-SendFile([string]$Path,[string]$Name){
+  try{
+    $c=Connect-Cdp
+    if(-not (Eval-Js 'ready' -Conn $c)){ throw 'нет поля ввода' }
+    if(-not (Eval-Js 'focusClear' -Conn $c)){ throw 'фокус в поле ввода не подтверждён' }
+    $pBefore=[int](Eval-Js 'prompts' -Conn $c); $before=[int](Eval-Js 'state' -Conn $c).n
+    [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$true } -Conn $c)
+    try{
+      if((Eval-Js 'openUpload' -Conn $c) -ne 'ok'){ throw 'кнопка «+» не найдена' }
+      Start-Sleep -Milliseconds 600; [void](Eval-Js 'clickUploadItem' -Conn $c); Start-Sleep -Milliseconds 600
+      $doc=Invoke-Cdp 'DOM.getDocument' @{ depth=-1; pierce=$true } -Conn $c
+      $ids=@((Invoke-Cdp 'DOM.querySelectorAll' @{ nodeId=$doc.root.nodeId; selector='input[type=file]' } -Conn $c).nodeIds)
+      if(-not $ids.Count){ throw 'поле выбора файла не найдено' }
+      [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); nodeId=$ids[-1] } -Conn $c)
+    } finally { try{ [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$false } -Conn $c) }catch{} }
+    $base=$Name -replace '\.md$',''; $ok=$false; $t0=Get-Date
+    while(((Get-Date)-$t0).TotalSeconds -lt $Cfg.AttachTimeoutSec -and -not $ok){ Start-Sleep -Milliseconds 700
+      $ch=@(Eval-Js 'chips' -Conn $c | ForEach-Object { [string]$_ }); $ok=(@($ch | Where-Object { $_ -like "*$base*" }).Count -gt 0) -and [bool](Eval-Js 'sendEnabled' -Conn $c) }
+    if(-not $ok){ throw "чип файла $Name не появился или загрузка не закончилась" }
+    if(([string](Eval-Js 'inputText' -Conn $c)).Trim()){ throw 'в поле ввода есть текст — вместе с файлом не отправляю' }
+    Assert-CanSendGemini 'отправку файла в Gemini' | Out-Null
+    if(-not (Eval-Js 'clickSend' -Conn $c)){ throw 'кнопка «Отправить» не найдена или недоступна' }
+  }catch{
+    if((Get-ErrorKind $_) -in @('stop','paused','limit','notsent')){ throw }
+    throw [GG.RelayNotSentException]::new("Gemini/CDP (файл): $($_.Exception.Message) — НЕ отправлено")
+  }
+  for($i=0;$i -lt 20;$i++){ Start-Sleep -Milliseconds 500
+    try{ if([int](Eval-Js 'prompts' -Conn $c) -gt $pBefore){ Log "Отправлено в Gemini (CDP): только вложение $Name"; return @{ before=$before; pBefore=$pBefore; via='cdp-file' } } }catch{} }
+  throw "Gemini/CDP: после «Отправить» запрос с файлом $Name не появился (повторно не отправляю)"
 }
 function GemCdp-WaitAnswer($Ctx){
   $before= if($Ctx){ [int]$Ctx.before } else { -1 }

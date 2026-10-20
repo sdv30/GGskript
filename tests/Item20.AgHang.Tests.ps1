@@ -183,7 +183,7 @@ Describe 'Пункт 20: зависание Antigravity и чужой текст
       $script:St=New-RelayState; $script:QStopG=$false; $script:QStopA=$false; $script:StaleNotified=@{}; $script:LastModel='Argon Ultra'
       $script:answer="## Задача`nсделай X"; $script:agSent=@()
       Mock Save-State {}; Mock Wait-FileStable {}
-      Mock Gem-GetModel { 'Argon Ultra' }; Mock Gem-Send { @{ before=1; pBefore=1; via='uia' } }; Mock Gem-WaitAnswer { 1 }
+      Mock Gem-GetModel { 'Argon Ultra' }; Mock Gem-SendFile { @{ before=1; pBefore=1; via='uia' } }; Mock Gem-WaitAnswer { 1 }
       Mock Gem-CountPrompts { 2 }; Mock Gem-LastReportPrompt { $null }; Mock Gem-CopyCode { $script:answer }
       Mock Ag-HasText { $false }
       Get-ChildItem $Cfg.Downloads | Remove-Item -Force

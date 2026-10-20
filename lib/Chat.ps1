@@ -160,7 +160,7 @@ function Start-ReportResendConfirm{
   $f=@(Get-Files) | Select-Object -Last 1
   if(-not $f){ Tg-Send 'В Downloads нет отчётов агента — пересылать нечего.' | Out-Null; return }
   $txt=[IO.File]::ReadAllText($f.FullName,[Text.Encoding]::UTF8); $st=Get-Stage $f.Name
-  $msg="Подтвердите: в Gemini заново уйдёт последний отчёт агента Antigravity — файл $($f.Name) из Downloads ($($txt.Length) симв., этап: $(Get-StageRu $st)). Текст тот же, что GGskript отправляет сам: «Файл отчёта: $($f.Name)» + содержимое. Ответ Gemini дальше пойдёт по обычным правилам: блок Markdown → в Antigravity, без блока — спрошу.$(if(-not (Is-Done $f.Name)){' Файл ещё в работе — отправится, когда до него дойдёт очередь.'})`nНачало:`n«$(Get-Preview $txt 200)»"
+  $msg="Подтвердите: в Gemini заново уйдёт последний отчёт агента Antigravity — файл $($f.Name) из Downloads ($($txt.Length) симв., этап: $(Get-StageRu $st)). Уйдёт так же, как GGskript отправляет сам: только файлом-вложением через «+», без текста в поле. Ответ Gemini дальше пойдёт по обычным правилам: блок Markdown → в Antigravity, без блока — спрошу.$(if(-not (Is-Done $f.Name)){' Файл ещё в работе — отправится, когда до него дойдёт очередь.'})`nНачало:`n«$(Get-Preview $txt 200)»"
   New-TgPrompt -Kind 'confirm' -Text $msg -Buttons 'Отправить=send|Отмена=cancel' -Data @{ action=@{ k='resendfile'; name=$f.Name } } | Out-Null
 }
 function Start-AwaitText([string]$Target='',[switch]$Direct){

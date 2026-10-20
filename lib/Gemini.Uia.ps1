@@ -173,8 +173,63 @@ function GemUia-PeekAnswer($h){
 }
 function GemUia-ChatTexts($h){ @(Uia-FindAll -Root $h -ControlType 'Text' | ForEach-Object { [string](Uia-Name $_) } | Where-Object { $_ }) }
 function GemUia-LastReportPrompt($h){
-  $t=@(Uia-FindAll -Root $h -ControlType 'Text' -NameRx 'Файл отчёта:\s*\S+\.md') | Select-Object -Last 1
-  if($t){ [regex]::Match((Uia-Name $t),'Файл отчёта:\s*(\S+\.md)').Groups[1].Value } else { $null }
+  # последний по порядку: заголовок «Файл отчёта: имя» (старый способ) или чип вложения — элемент, имя которого РАВНО имени отчёта
+  $last=$null
+  foreach($e in @(Uia-FindAll -Root $h)){ $nm=([string](Uia-Name $e)).Trim(); if(-not $nm){ continue }
+    $m=[regex]::Match($nm,'Файл отчёта:\s*(\S+\.md)'); if($m.Success){ $last=$m.Groups[1].Value; continue }
+    $v=Get-ChipReportName $nm; if($v){ $last=$v } }
+  $last
+}
+function Get-ChipReportName([string]$Nm){ $x=([string]$Nm).Trim(); if(-not $x -or $x.Length -gt 200){ return $null }
+  if($x -match $Cfg.Pattern){ return $x }; if(($x+'.md') -match $Cfg.Pattern){ return $x+'.md' }
+  $m=[regex]::Match($x,'^(?<f>\S+\.md)(\s|$)'); if($m.Success -and $m.Groups['f'].Value -match $Cfg.Pattern){ return $m.Groups['f'].Value }; $null }
+function GemUia-CountChips($h,[string]$Name){ @(Uia-FindAll -Root $h | Where-Object { (Get-ChipReportName (Uia-Name $_)) -eq $Name }).Count }
+function GemUia-FindSend($h){ @(Uia-FindAll -Root $h -ControlType 'Button' -NameRx $Cfg.RxSend | Where-Object { -not (Uia-IsOffscreen $_) }) | Select-Object -Last 1 }
+# Стандартный диалог «Открыть» (#32770) браузера: путь в поле «Имя файла», Enter.
+function GemUia-FillFileDialog([string]$Path,$Pid0){
+  $dlg=$null
+  for($i=0;$i -lt 30 -and -not $dlg;$i++){ Start-Sleep -Milliseconds 300; $dlg=@(Get-TopWindows | Where-Object { $_.class -eq '#32770' -and (-not $Pid0 -or $_.pid -eq $Pid0) }) | Select-Object -First 1 }
+  if(-not $dlg){ return $false }
+  $ed=@(Uia-FindAll -Root $dlg.h -ControlType 'Edit' | Where-Object { try{ $_.Current.AutomationId -eq '1148' }catch{ $false } }) | Select-Object -First 1
+  if(-not $ed){ $ed=@(Uia-FindAll -Root $dlg.h -ControlType 'Edit') | Select-Object -First 1 }
+  if(-not $ed){ return $false }
+  $set=$false; try{ $ed.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Path); $set=$true }catch{}
+  if(-not $set){ [void](Uia-Focus $ed); Use-TempClipboard { Set-ClipText $Path; Paste } }
+  Start-Sleep -Milliseconds 300
+  $ok=@(Uia-FindAll -Root $dlg.h -ControlType 'Button' | Where-Object { try{ $_.Current.AutomationId -eq '1' }catch{ $false } }) | Select-Object -First 1
+  if(-not ($ok -and (Uia-Invoke $ok))){ Activate-Window $dlg.h; [void](Uia-Focus $ed); PressEnter }
+  for($i=0;$i -lt 20;$i++){ Start-Sleep -Milliseconds 300; if(-not @(Get-TopWindows | Where-Object { $_.h -eq $dlg.h }).Count){ return $true } }
+  PressEsc; $false
+}
+function GemUia-SendFile([string]$Path,[string]$Name){
+  if(-not (Test-Path -LiteralPath $Path)){ throw [GG.RelayNotSentException]::new("Файл $Path не найден — НЕ отправлено") }
+  $h=Find-GeminiWindow; if(!$h){ throw [GG.RelayNotSentException]::new("Не найдено окно/вкладка браузера с '$($Cfg.GeminiTitle)'. Откройте вкладку Gemini.") }
+  $pid0=(Get-WindowInfo $h).pid
+  Invoke-WithFocus $h {
+    [void](GemUia-FocusInput $h)
+    if(GemUia-InputHasText $h){ ClearField; Start-Sleep -Milliseconds 300 }   # в поле ничего не должно остаться — только вложение
+    $chips0=GemUia-CountChips $h $Name
+    $btn=@(Uia-FindAll -Root $h -ControlType 'Button' -NameRx $Cfg.UploadBtnRx | Where-Object { -not (Uia-IsOffscreen $_) }) | Select-Object -Last 1
+    if(-not $btn){ throw [GG.RelayNotSentException]::new('Кнопка «+» (загрузка файла) в Gemini не найдена — отчёт НЕ отправлен (текст не вставляю)') }
+    [void](Uia-ClickEl $btn); Start-Sleep -Milliseconds 700
+    $it=$null; for($i=0;$i -lt 10 -and -not $it;$i++){ $it=@(Uia-FindAll -Root $h | Where-Object { (Uia-CtlType $_) -in @('MenuItem','Button','ListItem') -and (Uia-Name $_) -match $Cfg.UploadItemRx -and -not (Uia-IsOffscreen $_) }) | Select-Object -First 1; if(-not $it){ Start-Sleep -Milliseconds 300 } }
+    if(-not $it){ PressEsc; throw [GG.RelayNotSentException]::new('В меню «+» Gemini нет пункта «Загрузить файлы» — отчёт НЕ отправлен') }
+    [void](Uia-ClickEl $it)
+    if(-not (GemUia-FillFileDialog $Path $pid0)){ throw [GG.RelayNotSentException]::new('Диалог выбора файла не открылся/не закрылся — отчёт НЕ отправлен') }
+    $t0=Get-Date; $ready=$false
+    while(((Get-Date)-$t0).TotalSeconds -lt $Cfg.AttachTimeoutSec -and -not $ready){ Start-Sleep -Milliseconds 700
+      $sb=GemUia-FindSend $h; $ready=((GemUia-CountChips $h $Name) -gt $chips0) -and $sb -and (Uia-IsEnabled $sb) }
+    if(-not $ready){ throw [GG.RelayNotSentException]::new("Чип файла $Name не появился или загрузка не закончилась за $($Cfg.AttachTimeoutSec) сек — НЕ отправлено (вложение осталось в поле)") }
+    if(GemUia-InputHasText $h){ throw [GG.RelayNotSentException]::new('В поле Gemini появился текст — вместе с файлом не отправляю') }
+    $before=(GemUia-FindCopyButtons $h).Count; $pBefore=GemUia-CountPrompts $h
+    Assert-CanSendGemini 'отправку файла в Gemini' | Out-Null
+    $sb=GemUia-FindSend $h; if(-not (Uia-ClickEl $sb -PreferInvoke)){ throw [GG.RelayNotSentException]::new('Кнопка «Отправить» не нажалась — НЕ отправлено') }
+    $sent=$false
+    for($i=0;$i -lt 30 -and -not $sent;$i++){ Start-Sleep -Milliseconds 500; $sent=((GemUia-CountPrompts $h) -gt $pBefore) -or (GemUia-IsGenerating $h) }
+    if(-not $sent){ throw "После «Отправить» запрос с файлом $Name в диалоге Gemini не появился — проверьте вкладку (повторно не отправляю)" }
+    Log "Отправлено в Gemini (UIA): только вложение $Name"
+    @{ before=$before; pBefore=$pBefore; h=$h; via='uia-file' }
+  }
 }
 function GemUia-LastErrorText($h){
   $names=@(Uia-FindAll -Root $h -ControlType 'Text' | ForEach-Object { Uia-Name $_ } | Where-Object { $_ }) | Select-Object -Last 15

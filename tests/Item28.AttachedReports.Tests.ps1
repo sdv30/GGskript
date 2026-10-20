@@ -127,7 +127,7 @@ Describe 'Пункт 28: протокол запуска — 002 пропуще�
     Mock Check-Quotas { $script:Q=@{ time='08:50' }; 'ok' }; Mock Quota-Text { 'в норме' }; Mock Update-AutoPlan {}
     Mock Gem-IsGenerating { $false }; Mock Get-AgHealth { @{ ok=$true; kind='ok'; reasons=@() } }; Mock Find-QueuedItems { @() }
     Mock Gem-LastReportPrompt { $script:LP }; Mock Gem-PeekAnswer { $script:PK }; Mock Ag-HasText { $script:InAg }
-    Mock Gem-Send { [void]$script:GemSent.Add($Text); @{ pBefore=1 } }; Mock Ag-Send { [void]$script:AgSent.Add($Text) }
+    Mock Gem-Send { [void]$script:GemSent.Add($Text); @{ pBefore=1 } }; Mock Gem-SendFile { [void]$script:GemSent.Add($Name); @{ pBefore=1 } }; Mock Ag-Send { [void]$script:AgSent.Add($Text) }
   }
   It 'последний отчёт = самый новый (пропущен), ответ уже в Antigravity — ход Antigravity; ничего не отправляю' {
     [void](Set-FileStage -State $script:St -Name (N 7) -Stage 'skipped' -Note '«не отправлять» по кнопке' -Force)

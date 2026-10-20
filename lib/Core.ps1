@@ -99,6 +99,10 @@ function Get-DefaultSettings{
     CmdFile          = (Join-Path $Root 'commands.txt')
     StatusFile       = (Join-Path $Root 'relay_status.json')
     # ---- регэкспы UI Gemini (раньше были вне $Cfg) ----
+    UploadBtnRx      = '(?i)^(Open upload file menu|Upload file|Add files|Добавить файлы|Открыть меню загрузки( файлов)?|Загрузить файл|Меню загрузки)'   # кнопка «+» у поля Gemini
+    UploadItemRx     = '(?i)^(Upload files?|Загрузить файл(ы)?|Файлы|Files)\b'      # пункт меню «+» — файл с компьютера
+    RxSend           = '^(Send message|Отправить сообщение|Отправить)$'
+    AttachTimeoutSec = 60          # ждать, пока чип файла появится и загрузка закончится
     RxPrompt   = '^(Copy prompt|Скопировать запрос|Копировать запрос)$'
     RxCode     = '^(Copy code|Скопировать код|Копировать код)$'
     RxCopy     = '^(Copy|Копировать|Скопировать)$'
@@ -149,6 +153,8 @@ function Get-DefaultSettings{
     # ---- пункт 24: запуск без «хвоста» ----
     StartupNewestOnly  = $true      # при запуске (и после паузы ≥ StartupTriagePauseMin) брать только самый новый файл; старые необработанные — этап skipped
     StartupAskNewest   = $true      # самый новый не виден в чате Gemini — спросить в Telegram (Отправить / Не отправлять); $false — отправить сам
+    MirrorRelay        = $true      # постоянный наблюдатель: новый (не передававшийся) блок Markdown в последнем ответе Gemini -> в Antigravity, кто бы ни отправил запрос
+    MirrorEverySec     = 15
     AutoDecide         = $true      # автоматический поток решает сам по правилу времени: никаких вопросов в Telegram/панели (только уведомления)
     AutoSendGraceSec   = 60         # перед авто-отправкой отчёта после запуска подождать N сек и перепроверить чат Gemini (вдруг отправлен вручную)
     StartupTriagePauseMin = 0       # после «старт» из паузы не короче N мин — снова только самый новый файл (0 — после любой паузы)
