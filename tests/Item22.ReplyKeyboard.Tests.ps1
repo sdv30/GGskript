@@ -27,39 +27,57 @@ Describe 'Пункт 22: русские кнопки Telegram (ReplyKeyboardMark
       (Parse-Command -Text $B -Strict $true -HasDialog $true).k | Should -Be $K -Because 'при открытом диалоге кнопка тоже не должна перехватываться'
     }
     It '«Передай ответ» — без флага whole (только блок Markdown)' { (Parse-Command -Text 'Передай ответ').whole | Should -BeFalse }
-    It 'все 15 надписей клавиатуры распознаются (ни одна не unknown)' {
-      $l=@(Get-TgReplyLabels); $l.Count | Should -Be 15
+    It 'все 11 надписей клавиатуры распознаются (ни одна не unknown)' {
+      $l=@(Get-TgReplyLabels); $l.Count | Should -Be 11
       foreach($x in $l){ (Parse-Command -Text $x -Strict $true).k | Should -Not -Be 'unknown' -Because $x }
+    }
+    It 'надпись с эмодзи и без — одна команда: «<B>» -> <K>' -TestCases @(
+      @{B='📂 Отчёт в Gemini';K='fwdrep'},@{B='📂 Ответ в Antigravity';K='fwdans'},@{B='🛠 Antigravity: текст';K='agwrite'},
+      @{B='✨ Gemini: текст';K='gemwrite'},@{B='✨ Ответ Gemini';K='lastanswer'},@{B='ℹ️ Статус';K='status'},@{B='⏸ Стоп';K='stop'},
+      @{B='▶️ Старт';K='resume'},@{B='📸 Скрин';K='shot'},@{B='📊 Лимиты';K='limits'},@{B='❓ Помощь';K='help'}) {
+      param($B,$K)
+      (Parse-Command -Text $B -Strict $true).k | Should -Be $K
+      $plain=($B -replace '^(?:[^\p{L}\p{N}/!]|\u2139)+','').Trim()
+      (Parse-Command -Text $plain -Strict $true).k | Should -Be $K
     }
   }
 
   Context 'форма клавиатуры' {
-    It 'ряды и кнопки как задумано, resize_keyboard и is_persistent' {
+    It 'ряды по смыслу: файлы · Antigravity+Gemini · управление · прочее' {
       $k=New-TgReplyKeyboard
       $k.resize_keyboard | Should -BeTrue; $k.is_persistent | Should -BeTrue
-      $k.Contains('inline_keyboard') | Should -BeFalse
-      $k.keyboard.Count | Should -Be 5
-      ($k.keyboard | ForEach-Object { $_.Count }) -join ',' | Should -Be '3,3,2,3,4'
-      $k.keyboard[0][0].text | Should -Be 'Статус'; $k.keyboard[4][3].text | Should -Be 'Помощь'
-      $k.keyboard[2][1].text | Should -Be 'Перешли отчёт в Gemini'
+      $k.keyboard.Count | Should -Be 4
+      ($k.keyboard | ForEach-Object { $_.Count }) -join ',' | Should -Be '2,3,3,3'
+      $k.keyboard[0][0].text | Should -Be '📂 Отчёт в Gemini'; $k.keyboard[3][2].text | Should -Be '❓ Помощь'
     }
-    It 'JSON: массив массивов объектов {text}, без callback_data' {
-      $j=(@{ reply_markup=(New-TgReplyKeyboard) } | ConvertTo-Json -Depth 10 -Compress)
-      $j | Should -Match '"keyboard":\[\[\{"text":"Статус"\},'
-      $j | Should -Match '"resize_keyboard":true'; $j | Should -Match '"is_persistent":true'
-      $j | Should -Not -Match 'callback_data'
-      $o=$j | ConvertFrom-Json; @($o.reply_markup.keyboard).Count | Should -Be 5; @($o.reply_markup.keyboard[1]).Count | Should -Be 3
+    It 'убранные с клавиатуры кнопки остались командами' {
+      $l=@(Get-TgReplyLabels)
+      foreach($x in 'Прими','Передай всё равно','Передай ответ','Отправь заново','Выключи скрипт','Напиши'){ $l | Should -Not -Contain $x; (Parse-Command -Text $x).k | Should -Not -Be 'unknown' }
     }
-    It 'надписи кнопок ≤ 64 символов и без «/» (это текст, а не slash-команда)' {
-      foreach($x in Get-TgReplyLabels){ $x.Length | Should -BeLessOrEqual 64; $x | Should -Not -Match '^/' }
+    It 'все надписи начинаются с эмодзи, затем заглавная буква; ≤ 64 символов' {
+      foreach($x in Get-TgReplyLabels){ $x.Length | Should -BeLessOrEqual 64; $x | Should -Not -Match '^/'; $w=($x -replace '^(?:[^\p{L}\p{N}]|\u2139)+',''); $w.Substring(0,1) | Should -BeExactly $w.Substring(0,1).ToUpper() }
+    }
+  }
+
+  Context 'меню «/»' {
+    It 'без дублей, описания с заглавной, команды разбираются' {
+      $m=@(Get-TgMenuCommands); ($m.command | Select-Object -Unique).Count | Should -Be $m.Count
+      $m.command | Should -Not -Contain 'pause'; $m.command | Should -Not -Contain 'send'; $m.command | Should -Not -Contain 'resend'; $m.command | Should -Not -Contain 'cancel'
+      foreach($c in $m){ $c.description.Length | Should -BeLessOrEqual 256; $w=($c.description -replace '^[^\p{L}]+',''); $w.Substring(0,1) | Should -BeExactly $w.Substring(0,1).ToUpper()
+        if($c.command -ne 'shutdown'){ (Parse-Command -Text "/$($c.command)").k | Should -Not -Be 'unknown' -Because $c.command } }
+    }
+    It 'Register-TgCommands шлёт setMyCommands' {
+      Register-TgCommands | Should -BeTrue
+      $r=@($script:TgCalls | Where-Object { $_.m -eq 'setMyCommands' }); $r.Count | Should -Be 1; @($r[0].b.commands).Count | Should -Be 18
     }
   }
 
   Context 'куда прикрепляется' {
     It '«помощь» — с клавиатурой' {
       Handle-Command 'Помощь' 'tg'
-      $s=(Sent '*Команды*'); $s.Count | Should -Be 1
-      $s[0].b.reply_markup.keyboard.Count | Should -Be 5
+      $s=(Sent '*команды*'); $s.Count | Should -Be 1
+      $s[0].b.parse_mode | Should -Be 'HTML'
+      $s[0].b.reply_markup.keyboard.Count | Should -Be 4
       $s[0].json | Should -Match '"is_persistent":\s*true'
     }
     It 'стартовое сообщение — с клавиатурой' {
@@ -75,13 +93,13 @@ Describe 'Пункт 22: русские кнопки Telegram (ReplyKeyboardMark
     It 'длинная «помощь» из нескольких частей — клавиатура только на последней' {
       Tg-Send (('x'*3900)+"`n"+('y'*3900)) -Markup (New-TgReplyKeyboard) | Out-Null
       $s=@($script:TgCalls | Where-Object { $_.m -eq 'sendMessage' }); $s.Count | Should -Be 2
-      $s[0].b.Contains('reply_markup') | Should -BeFalse; $s[1].b.reply_markup.keyboard.Count | Should -Be 5
+      $s[0].b.Contains('reply_markup') | Should -BeFalse; $s[1].b.reply_markup.keyboard.Count | Should -Be 4
     }
     It 'TgReplyKeyboard=false — ни в «помощи», ни при запуске клавиатуры нет' {
       $Cfg.TgReplyKeyboard=$false
       Get-TgReplyMarkup | Should -BeNullOrEmpty
       Handle-Command 'помощь' 'tg'
-      (Sent '*Команды*')[0].b.Contains('reply_markup') | Should -BeFalse
+      (Sent '*команды*')[0].b.Contains('reply_markup') | Should -BeFalse
       Mock Gem-IsReady { $false }; Mock Ag-GetWindow { $null }; Mock Get-Files { @() }
       Start-Procedure | Out-Null
       (Sent '*процедура запуска*')[0].b.Contains('reply_markup') | Should -BeFalse

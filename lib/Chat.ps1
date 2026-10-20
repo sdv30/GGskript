@@ -138,14 +138,14 @@ function Send-NoCodePrompt([string]$Label,[string]$Model,[string]$FullPath,[stri
   $msg="ℹ️ Gemini ответил на $Label, но без блока Markdown (похоже, объяснение или вопрос). В Antigravity ничего не отправлено. Прислать копию ответа?`n$(if($Model){"Модель: $Model. "})$info`nЕщё можно: «Переслать в Antigravity» — весь ответ (покажу, что уйдёт, и спрошу), «Написать ответ Gemini» — ваш текст в Gemini."
   New-TgPrompt -Kind 'nocode' -Text $msg -Buttons 'Да=copy|Нет=no;Переслать в Antigravity=toag;Написать ответ Gemini=writegem' -Data @{ label=$Label; full=$FullPath; file=$File }
 }
-function Send-AnswerCopy([string]$Path,[string]$Label){
+function Send-AnswerCopy([string]$Path,[string]$Label,[string]$Who='Gemini'){
   $t=Read-TextFile $Path
   if(-not $t){ Tg-Send "Полный текст ответа на $Label не сохранён (не удалось скопировать в момент ответа), поэтому копию прислать не могу. «что ответил джемини» пришлёт текущий последний ответ из окна Gemini." | Out-Null; return }
   $parts=@(Split-TgParagraphs $t ($Cfg.TgMaxLen-120)); $k=$parts.Count; $lim=[Math]::Min($k,[int]$Cfg.TgCopyMaxMessages)
-  for($i=0;$i -lt $lim;$i++){ $h= if($k -gt 1){ "📄 Ответ Gemini на $Label ($($i+1)/$k):" } else { "📄 Ответ Gemini на $($Label):" }; [void](Tg-SendMsg -Text "$h`n`n$($parts[$i])") }
+  for($i=0;$i -lt $lim;$i++){ $h= if($k -gt 1){ "📄 Ответ $Who на $Label ($($i+1)/$k):" } else { "📄 Ответ $Who на $($Label):" }; [void](Tg-SendMsg -Text "$h`n`n$($parts[$i])") }
   if($k -gt $Cfg.TgCopyFileAfterParts){
     $fn=([IO.Path]::GetFileNameWithoutExtension(($Label -replace '[\\/:*?"<>|\s]','_')))+'_answer.md'
-    $ok=Tg-SendDocument $Path "Ответ Gemini на $Label целиком ($($t.Length) симв.)" $fn
+    $ok=Tg-SendDocument $Path "Ответ $Who на $Label целиком ($($t.Length) симв.)" $fn
     if($lim -lt $k){ Tg-Send "Показал $lim из $k частей; $(if($ok){'полный текст — в файле выше'}else{'файл отправить не удалось'})." | Out-Null }
   }
   Log "Копия ответа на $Label отправлена в Telegram ($($t.Length) симв., частей: $k)"
@@ -162,8 +162,10 @@ function Start-ReportResendConfirm{
   $msg="Подтвердите: в Gemini заново уйдёт последний отчёт агента Antigravity — файл $($f.Name) из Downloads ($($txt.Length) симв., этап: $(Get-StageRu $st)). Текст тот же, что GGskript отправляет сам: «Файл отчёта: $($f.Name)» + содержимое. Ответ Gemini дальше пойдёт по обычным правилам: блок Markdown → в Antigravity, без блока — спрошу.$(if(-not (Is-Done $f.Name)){' Файл ещё в работе — отправится, когда до него дойдёт очередь.'})`nНачало:`n«$(Get-Preview $txt 200)»"
   New-TgPrompt -Kind 'confirm' -Text $msg -Buttons 'Отправить=send|Отмена=cancel' -Data @{ action=@{ k='resendfile'; name=$f.Name } } | Out-Null
 }
-function Start-AwaitText([string]$Target=''){
-  $script:TgAwait=@{ target=$Target; until=(Get-Date).AddMinutes($Cfg.TgAwaitTextMin) }
+function Start-AwaitText([string]$Target='',[switch]$Direct){
+  $script:TgAwait=@{ target=$Target; direct=[bool]$Direct; until=(Get-Date).AddMinutes($Cfg.TgAwaitTextMin) }
+  if($Direct){ $nm= if($Target -eq 'ag'){ '🛠 <b>Antigravity</b>' } else { '✨ <b>Gemini</b>' }
+    Tg-Send "$nm`nНапишите текст одним сообщением — отправлю и пришлю ответ.`n<i>«отмена» — ничего не отправлять · жду $($Cfg.TgAwaitTextMin) мин</i>" -Html | Out-Null; return }
   Tg-Send "✏️ Введите текст$(if($Target -eq 'gemini'){' для Gemini'}elseif($Target -eq 'ag'){' для Antigravity'}) одним сообщением (или «отмена»). Жду $($Cfg.TgAwaitTextMin) мин." | Out-Null
 }
 function Ask-WhereToSend([string]$Text,[string]$Kind='where',[string]$Target=''){
@@ -183,7 +185,7 @@ function Assert-GeminiFree{
 }
 # Ручной текст в Gemini (из «напиши» / свободного текста / «Написать ответ Gemini»): ждём ответ; с блоком — спрашиваем
 # «Переслать в Antigravity?», без блока — предлагаем копию. Этапы файлов не меняются.
-function Send-GeminiManual([string]$Text){
+function Send-GeminiManual([string]$Text,[switch]$SendCopy){
   Assert-NotPaused 'сообщение в Gemini'
   Assert-Quota -Gemini -Ag
   Assert-GeminiFree
@@ -200,13 +202,31 @@ function Send-GeminiManual([string]$Text){
   $w=Get-WholeAnswer
   $full= if($w.text){ Save-FullAnswer "$tag.md" $w.text } else { $null }
   $label="ваше сообщение ($((Get-Date).ToString('HH:mm')))"
+  if($SendCopy -and $full){ Send-AnswerCopy $full $label }
   if($code){
     $cp=Save-FullAnswer "$($tag)_code.md" $code
     New-TgPrompt -Kind 'gemcode' -Text "💬 Gemini ответил на $label (модель $m2). В ответе есть блок Markdown: $($code.Length) симв., первая строка «$(Get-FirstLine $code)». Переслать блок в Antigravity?" -Buttons 'Да=toag|Нет=no;Прислать копию ответа=copy' -Data @{ code=$cp; full=$(if($full){$full}else{$cp}); label=$label } | Out-Null
-  } else { Send-NoCodePrompt -Label $label -Model $m2 -FullPath $full | Out-Null }
+  } elseif(-not ($SendCopy -and $full)){ Send-NoCodePrompt -Label $label -Model $m2 -FullPath $full | Out-Null }
+}
+# «Antigravity: текст»: ответ агента — новый отчёт в Downloads после отправки; пришлём его копию в Telegram.
+$script:AgWatch=$null; $script:AgWatchLast=Get-Date
+function Start-AgWatch{ $script:AgWatch=@{ since=(Get-Date); known=@(Get-Files -All | ForEach-Object { $_.Name }); until=(Get-Date).AddMinutes([double]$Cfg.AgReplyWaitMin) } }
+function Check-AgWatch{
+  if(-not $script:AgWatch -or ((Get-Date)-$script:AgWatchLast).TotalSeconds -lt 5){ return }; $script:AgWatchLast=Get-Date
+  $w=$script:AgWatch
+  $f=@(Get-Files -All | Where-Object { $w.known -notcontains $_.Name -and $_.LastWriteTime -ge $w.since.AddSeconds(-2) -and ((Get-Date)-$_.LastWriteTime).TotalSeconds -ge 3 }) | Select-Object -First 1
+  if($f){ $script:AgWatch=$null; Send-AnswerCopy $f.FullName $f.Name -Who 'Antigravity'; return }
+  if((Get-Date) -gt $w.until){ $script:AgWatch=$null; Tg-Send "⌛ Antigravity за $($Cfg.AgReplyWaitMin) мин не прислал новый отчёт. Когда он появится, GGskript обработает его как обычно." | Out-Null }
 }
 function Invoke-ChatAction($c){
   switch($c.k){
+    'gemask' { Send-GeminiManual $c.text -SendCopy; return }
+    'agask' {
+      Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag
+      Start-AgWatch; try{ Ag-Send -Text $c.text -Label 'текст из Telegram' }catch{ $script:AgWatch=$null; throw }
+      Log 'Текст из Telegram отправлен в Antigravity, жду отчёт агента'
+      Tg-Send "🛠 <b>Отправлено в Antigravity</b> ($($c.text.Length) симв.)`nПришлю ответ агента, как только появится новый отчёт (до $($Cfg.AgReplyWaitMin) мин)." -Html | Out-Null
+    }
     'fwdtext' {
       if($c.target -eq 'gemini'){ Send-GeminiManual $c.text; return }
       Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag

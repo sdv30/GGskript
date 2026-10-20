@@ -63,7 +63,7 @@ Describe 'Пункт 21: Telegram — кнопки, копия ответа, п�
       @{t='я напишу позже';k='unknown'},@{t='ответ в Gemini хороший';k='unknown'},@{t='/sender';k='unknown'},@{t='!asknocode x.md';k='asknocode'}
     ) { (Parse-Command -Text $t -Strict $true).k | Should -Be $k }
     It '/send <текст> сохраняет текст' { (Parse-Command "/send строка 1`nстрока 2").arg | Should -Be "строка 1`nстрока 2" }
-    It 'помощь перечисляет новые команды' { $HelpText | Should -Match 'перешли ответ в Antigravity'; $HelpText | Should -Match 'перешли ответ в Gemini'; $HelpText | Should -Match '/send' }
+    It 'помощь перечисляет новые команды' { $HelpText | Should -Match 'Ответ в Antigravity'; $HelpText | Should -Match 'Отчёт в Gemini'; $HelpText | Should -Match 'Gemini: текст' }
   }
 
   Context 'сценарий А: ответ без блока Markdown' {

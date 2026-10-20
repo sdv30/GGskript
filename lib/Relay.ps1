@@ -357,32 +357,46 @@ function Get-StaleFile{ @(Get-Files | Where-Object { (Get-Stage $_.Name) -eq 'st
 
 # ---------- Команды ----------
 $HelpText=@'
-GGskript. Команды:
-• статус — что сейчас делает GGskript
-• стоп (или /stop, пауза) — остановиться: ничего не отправлять, лимиты/модель не проверять, окна не трогать; процесс слушает Telegram
-• старт / продолжай (или /resume) — продолжить: сначала протокол запуска (окна, лимиты, модель, файлы, сверка чатов), потом работа
-• выключи скрипт (или /exit) — завершить процесс GGskript совсем (спрошу подтверждение); запустить снова — только ярлыком на ПК
-• прими (или /accept) — нажать «Accept all» в Antigravity
-• автоподтверждение вкл / выкл (или /autoallow on|off) — сам отвечать «Yes, allow this time» + Submit на запросы разрешения Antigravity (никогда «always» и «No»)
-• джемини: <текст> (или /gemini <текст>) — отправить текст в Gemini; блок Markdown из ответа передам в Antigravity
-• антигравити: <текст> (или /ag <текст>) — отправить текст младшей модели
-• передай ответ — передать ТОЛЬКО блок с подписью «Markdown» из последнего ответа Gemini; другие блоки (Python, Plaintext, Bash…) не беру никогда. Весь ответ целиком — только «передай весь ответ»
-• перешли ответ в Antigravity (или /toag) — последний ответ Gemini целиком; покажу начало и спрошу (то же делает «передай весь ответ»)
-• перешли ответ в Gemini (или /togemini) — последний отчёт агента из Downloads заново в Gemini; покажу, что уйдёт, и спрошу
-• напиши (или /send) — бот попросит текст, потом спросит «Куда переслать?» (Gemini / Antigravity / Отмена); /send <текст> — сразу спросит куда
-• любой текст не-команда — спрошу «Переслать этот текст?» (Gemini / Antigravity / Нет)
-• на вопросы с кнопками можно ответить и словом «да»/«нет» (в том числе ответом-reply на вопрос)
-• передай всё равно — передать ответ, совпавший со старым (этап «stale»); отправь заново — отправить отчёт в Gemini ещё раз
-• что ответил джемини — прислать сюда последний ответ Gemini (длинный — частями, очень длинный — ещё и файлом)
-• скрин — прислать снимок экрана
-• список окон / убери из списка N — авто-закрываемые окна
-• лимиты — проверить лимиты Gemini и Antigravity сейчас
-• выключи компьютер — выключить ПК (через минуту); «выключи компьютер в 14-00» (14:00, 14.00, «в 14»; если время сегодня прошло — завтра), «… через 30 минут», «… через 2 часа»; /shutdown [ЧЧ:ММ | +мин]. Всегда спрошу подтверждение («да», 2 мин)
-• отмени выключение / не выключай (/shutdown_cancel) — отменить; когда выключение — что запланировано
-• помощь — этот список
-Звуки на ПК: 1 длинный низкий — работа остановлена (лимит/модель); 2 коротких — в ответе нет блока Markdown; 3 коротких — нужна ваша помощь (ошибка). Не чаще раза в 10 мин; настройка Sounds: important / off / all.
-Кнопки под полем ввода — те же команды по-русски; меню «/» — латинские команды.
+<b>GGskript — команды</b>
+Кнопки внизу и меню «/» сгруппированы одинаково. Эмодзи набирать не нужно.
+
+<b>📂 Файлы</b>
+• <b>Отчёт в Gemini</b> (/togemini) — последний отчёт агента из Downloads снова в Gemini (с подтверждением)
+• <b>Ответ в Antigravity</b> (/toag) — весь последний ответ Gemini в Antigravity (с подтверждением)
+
+<b>🛠 Antigravity</b>
+• <b>Antigravity: текст</b> (/ag) — бот попросит текст, отправит агенту и пришлёт его ответ (новый отчёт)
+• /relay — только блок «Markdown» из последнего ответа Gemini
+• /force — передать ответ, совпавший со старым
+• /accept — нажать «Accept all»
+• /autoallow вкл | выкл — сам отвечать «Yes, allow this time»
+
+<b>✨ Gemini</b>
+• <b>Gemini: текст</b> (/gemini) — бот попросит текст, отправит в Gemini и пришлёт ответ
+• <b>Ответ Gemini</b> (/answer) — последний ответ Gemini (длинный — частями и файлом)
+
+<b>⚙️ Управление</b>
+• <b>Статус</b> — что сейчас происходит
+• <b>Стоп</b> — пауза: окна не трогаю, слушаю Telegram
+• <b>Старт</b> — проверка окон, лимитов, модели и продолжение
+• /exit — выключить скрипт (запуск снова — только ярлыком на ПК)
+
+<b>🧰 Прочее</b>
+• <b>Скрин</b> — снимок экрана · <b>Лимиты</b> — проверить сейчас
+• «выключи компьютер [в 14:00 | через 30 минут]» (/shutdown) · «отмени выключение» (/shutdown_cancel) · «когда выключение»
+• /windows — авто-закрываемые окна · «убери из списка N»
+• Любой другой текст — спрошу, куда переслать
+
+<i>Звуки на ПК: 1 длинный низкий — остановка (лимит/модель), 2 коротких — нет блока Markdown, 3 коротких — нужна помощь.</i>
 '@
+# Статус для Telegram: заголовок, «<b>Поле:</b> значение», хвост журнала моноширинно.
+function Format-StatusHtml([string]$T){
+  $i=$T.IndexOf("`nПоследние строки журнала:"); $head= if($i -ge 0){ $T.Substring(0,$i) } else { $T }; $tail= if($i -ge 0){ $T.Substring($i).Trim() -replace '^Последние строки журнала:\s*','' } else { '' }
+  $lines=@($head.Trim() -split "`r?`n" | ForEach-Object { if($_ -match '^([^:]{2,45}):\s*(.*)$'){ "<b>$(ConvertTo-TgHtml $matches[1]):</b> $(ConvertTo-TgHtml $matches[2])" } elseif($_.Trim()){ ConvertTo-TgHtml $_ } })
+  $o="ℹ️ <b>Статус GGskript</b>`n`n"+($lines -join "`n")
+  if($tail){ $o+="`n`n<b>Журнал:</b>`n<pre>$(ConvertTo-TgHtml $tail)</pre>" }
+  $o
+}
 function Get-StatusText{
   $m=try{ Get-ModelNow }catch{ "? ($($_.Exception.Message))" }
   $acc=try{ $h=Ag-GetWindow; [bool]($h -and (Find-AcceptAll $h)) }catch{ $false }
@@ -413,7 +427,7 @@ $tail
 "@
 }
 # Пункт 25B/C: в режиме СТОП — никаких лимитов, модели и окон. Только Telegram/команды и таймер выключения ПК.
-$script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','fwdans','fwdans-prep','fwdtext','resendfile')
+$script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','fwdans','fwdans-prep','fwdtext','resendfile','gemask','agask')
 function Get-StopRefusal([string]$K){ "⏹ Сейчас СТОП — окна не трогаю, команду ($K) не выполняю. Нажмите «Старт», потом повторите." }
 function Invoke-StoppedStep{
   $script:State='⏹ стоп — жду «Старт» (слушаю Telegram, окна не трогаю)'
@@ -432,6 +446,7 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
     else{
       $aw=$script:TgAwait; $script:TgAwait=$null
       if((Parse-Command -Text $Text).k -eq 'cancel'){ Tg-Send 'Отменено, ничего не отправлено.' | Out-Null; return }
+      if($aw.direct){ Queue-ChatAction @{ k=$(if($aw.target -eq 'ag'){'agask'}else{'gemask'}); text=$Text.Trim() }; return }
       [void](Ask-WhereToSend -Text $Text.Trim() -Kind 'where' -Target $aw.target); return
     }
   }
@@ -439,8 +454,8 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
   $c.src=$Source
   if($script:Paused -and $c.k -in $script:WindowKinds){ Log "Стоп: команда $($c.k) отклонена"; Tg-Send (Get-StopRefusal $c.k) | Out-Null; return }
   switch($c.k){
-    'help'    { Tg-Send $HelpText -Markup (Get-TgReplyMarkup) | Out-Null }
-    'status'  { Tg-Send (Get-StatusText) | Out-Null }
+    'help'    { Tg-Send $HelpText -Html -Markup (Get-TgReplyMarkup) | Out-Null }
+    'status'  { Tg-Send (Format-StatusHtml (Get-StatusText)) -Html | Out-Null }
     'shutdown'       { Request-Shutdown $c.spec $Source $ReplyTo }
     'shutdowncancel' { Cancel-Shutdown }
     'shutdownstatus' { Tg-Send (Get-ShutdownStatusText) | Out-Null }
@@ -493,6 +508,8 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
         else { Tg-Send "Не нашёл кнопку «$($c.button)» (нужно точное название). Доступные: $(($info.buttons) -join ', ')" | Out-Null }
       }
     }
+    { $_ -in 'gemwrite','agwrite' } { if($Source -ne 'tg'){ Tg-Send 'Эта кнопка работает только из Telegram.' | Out-Null; return }
+                Start-AwaitText -Target $(if($c.k -eq 'agwrite'){'ag'}else{'gemini'}) -Direct }
     'write'   { if($Source -ne 'tg'){ Tg-Send '«напиши» работает только из Telegram.' | Out-Null; return }
                 if($c.arg){ [void](Ask-WhereToSend -Text $c.arg -Kind 'where') } else { Start-AwaitText } }
     'fwdans'  { if($Source -ne 'tg'){ Tg-Send 'Эта команда работает только из Telegram (нужно подтверждение кнопкой).' | Out-Null; return }
@@ -562,7 +579,7 @@ function Run-Action($c){
       Set-Stage $sf.Name 'resend'; $script:StaleNotified.Remove($sf.Name); Tg-Send "🔁 $($sf.Name) будет отправлен в Gemini заново." | Out-Null
     }
     'lastanswer' { $a=Gem-CopyWhole; if(!$a){ throw 'не нашёл ответ Gemini' }; $p=Save-FullAnswer ('last_'+(Get-Date).ToString('yyyyMMdd_HHmmss')+'.md') $a; if($p){ Send-AnswerCopy $p 'последнее сообщение' } else { Tg-Send "Последний ответ Gemini:`n`n$a" | Out-Null } }
-    { $_ -in 'fwdtext','fwdans-prep','resendfile' } { Invoke-ChatAction $c }
+    { $_ -in 'fwdtext','fwdans-prep','resendfile','gemask','agask' } { Invoke-ChatAction $c }
     'accept' { if(Try-AcceptAll){ Tg-Send 'Нажал «Accept all».' | Out-Null } else { Tg-Send 'Кнопки «Accept all» в Antigravity сейчас нет.' | Out-Null } }
   }
 }
@@ -651,7 +668,7 @@ function Check-AgQueue{
 # ---------- Pump / Nap ----------
 function Pump{ Poll-Tg; Sweep-TgPrompts; try{ Check-Shutdown }catch{ Log "Выключение: $($_.Exception.Message)" }; Read-CmdFile; Check-LocalControl; Write-Status; if($script:StopReq){ throw [GG.RelayStopException]::new() }
   if($script:Paused -and $script:AbortOnStop){ $script:AbortOnStop=$false; throw [GG.RelayPausedException]::new('СТОП — ожидание ответа Gemini прервано (после «Старт» протокол проверит чат)') }
-  Invoke-AuxDuringWait; Invoke-AutoAllowTick }
+  Invoke-AuxDuringWait; Invoke-AutoAllowTick; try{ Check-AgWatch }catch{ Log "Ответ Antigravity: $($_.Exception.Message)" } }
 # Ожидание ответа Gemini, которое «Стоп» может прервать (пункт 25B). Внутри — только чтение окна Gemini.
 function Wait-GemAnswerStoppable($ctx){ $script:AbortOnStop=$true; try{ Gem-WaitAnswer $ctx } finally { $script:AbortOnStop=$false } }
 # AcceptAllDuringWait: во время долгого ожидания ответа Gemini нажимать Accept all (и смотреть очередь Antigravity).

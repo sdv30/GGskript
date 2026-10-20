@@ -143,6 +143,7 @@ function Get-DefaultSettings{
     # ---- пункт 21: кнопки Telegram, пересылка, свободный текст ----
     TgPromptTimeoutMin = 30         # сколько минут действуют кнопки вопроса (потом «время вышло»)
     TgAwaitTextMin     = 10         # «напиши»: сколько ждать текст
+    AgReplyWaitMin     = 30         # «Antigravity: текст»: сколько ждать новый отчёт агента
     TgOfferForward     = $true      # на текст-не-команду спросить «Переслать этот текст? Gemini / Antigravity / Нет»
     TgMaxLen           = 4096       # лимит длины сообщения Telegram
     # ---- пункт 24: запуск без «хвоста» ----
@@ -560,12 +561,21 @@ function Format-ShutLeft([datetime]$At,[datetime]$Now=(Get-Date)){
 }
 function Parse-Command{
   param([string]$Text,[bool]$HasDialog=$false,[bool]$Strict=$true)
-  $t=([string]$Text).Trim(); $n=($t.ToLower() -replace 'ё','е')
+  $t=([string]$Text).Trim()
   if(-not $t -or (Test-EchoNoise $t)){ return @{k='unknown'} }
+  $t=($t -replace '^(?:[^\p{L}\p{N}/!]|\u2139)+','').Trim()   # эмодзи кнопки («📂 », «✨ »…) не важны
+  if(-not $t){ return @{k='unknown'} }
+  $n=($t.ToLower() -replace 'ё','е')
   $gem='(?:дж?[еиы]м[еиы]н[иы]\w*|г[еи]м[еи]н[иы]\w*|gemini\w*|аргон\w*|старш\w*)'
   $ag='(?:анти\s*-?\s*гр\w*|antigravity\w*|младш\w*)'
   $verb='(?:напиши|написать|отправь|отправить|скажи|спроси|передай|пошли)'
   $end='\s*[.!]*\s*$'
+  # кнопки «Gemini: текст» / «Antigravity: текст» и /gemini, /ag без текста — бот попросит текст
+  if($t -match '^/gemini(?:@\S+)?\s*$' -or $n -match "^\s*$gem\s*:\s*текст$end"){ return @{k='gemwrite'} }
+  if($t -match '^/ag(?:@\S+)?\s*$' -or $n -match "^\s*$ag\s*:\s*текст$end"){ return @{k='agwrite'} }
+  if($n -match "^\s*отч[еe]т\s+(?:снова\s+)?в\s+$gem$end"){ return @{k='fwdrep'} }
+  if($n -match "^\s*(?:весь\s+)?ответ\s+(?:gemini\s+)?в\s+$ag$end"){ return @{k='fwdans'} }
+  if($n -match "^\s*ответ\s+$gem$end"){ return @{k='lastanswer'} }
   if($t -match '(?s)^/gemini(?:@\S+)?\s+(.+)$'){ return @{k='gemini';arg=$matches[1].Trim()} }
   if($t -match '(?s)^/ag(?:@\S+)?\s+(.+)$'){ return @{k='ag';arg=$matches[1].Trim()} }
   if($t -match '^!asknocode\s+(\S+)\s*$'){ return @{k='asknocode'; arg=$matches[1]} }   # служебная (только с ПК, commands.txt)

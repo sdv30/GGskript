@@ -160,7 +160,7 @@ Describe 'Пункт 25B: в режиме СТОП — никаких прове
   It '«статус», «скрин», «помощь» на СТОП работают' {
     Handle-Command 'статус' 'tg'; (Sent '*СТОП — жду «Старт»*').Count | Should -Be 1
     Handle-Command 'скрин' 'tg'; Should -Invoke Send-Screenshot -Times 1
-    Handle-Command 'помощь' 'tg'; (Sent '*Команды*').Count | Should -Be 1
+    Handle-Command 'помощь' 'tg'; (Sent '*команды*').Count | Should -Be 1
   }
   It 'команда из очереди (поставлена до стопа) на СТОП не выполняется' {
     $script:Queue.Enqueue(@{ k='relay'; src='tg' }); Mock Run-Action {}
@@ -234,11 +234,11 @@ Describe 'Пункт 25C: «стоп» и «выключи скрипт»' -Tag 
     New-Item -ItemType File $Cfg.StopFile | Out-Null; Invoke-MainStep | Should -Be 'stop'
   }
   It 'помощь: стоп/старт/выключи скрипт и «передай весь ответ»' {
-    $HelpText | Should -Match 'стоп \(или /stop, пауза\)'; $HelpText | Should -Match 'выключи скрипт \(или /exit\)'
-    $HelpText | Should -Match 'ТОЛЬКО блок с подписью «Markdown»'; $HelpText | Should -Match 'передай весь ответ'
+    $HelpText | Should -Match '<b>Стоп</b>'; $HelpText | Should -Match '/exit — выключить скрипт'
+    $HelpText | Should -Match 'только блок «Markdown»'; $HelpText | Should -Match '/toag'
   }
-  It 'клавиатура: Статус|Стоп|Старт, «Выключи скрипт» есть, «Пауза» и «Продолжай» убраны' {
-    $l=Get-TgReplyLabels; $l[0..2] -join '|' | Should -Be 'Статус|Стоп|Старт'; $l | Should -Contain 'Выключи скрипт'; $l | Should -Not -Contain 'Пауза'; $l | Should -Not -Contain 'Продолжай'
+  It 'клавиатура: Статус|Стоп|Старт подряд, «Выключи скрипт» только в меню, «Пауза» и «Продолжай» убраны' {
+    $l=Get-TgReplyLabels; ($l -join '|') | Should -Match 'ℹ️ Статус\|⏸ Стоп\|▶️ Старт'; $l | Should -Not -Contain 'Выключи скрипт'; (Get-TgMenuCommands).command | Should -Contain 'exit'; $l | Should -Not -Contain 'Пауза'; $l | Should -Not -Contain 'Продолжай'
   }
   It 'ярлыки: GGskript_exit.bat -> STOP (выход); панель: Стоп / Выключить скрипт' {
     $r=Split-Path $PSScriptRoot -Parent

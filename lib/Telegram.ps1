@@ -34,18 +34,18 @@ function Resolve-ChatId($c){
 $script:TgToken=$null; $script:TgChat=$null; $script:LastTg=@{}
 function Init-Tg{
   $c=Load-TgCfg; $script:TgToken=Get-TgToken $c
-  if($script:TgToken){ if(-not $c){ $c=[ordered]@{} }; $script:TgChat=[string](Resolve-ChatId $c) }
+  if($script:TgToken){ if(-not $c){ $c=[ordered]@{} }; $script:TgChat=[string](Resolve-ChatId $c); [void](Register-TgCommands) }
 }
 # Единый отправитель. -DedupMin N — не повторять тот же текст чаще раза в N минут (как прежний Notify). -Force — без дедупа.
 function Tg-Send{
-  param([string]$Text,[int]$DedupMin=0,[switch]$Force,$Markup=$null)
+  param([string]$Text,[int]$DedupMin=0,[switch]$Force,$Markup=$null,[switch]$Html)
   if($script:LogReplies){ Log ('> '+(Format-Short $Text $Cfg.LogTextMax)) }
   if(!$script:TgToken -or !$script:TgChat){ return $false }
   if($DedupMin -gt 0 -and -not $Force -and $script:LastTg.ContainsKey($Text) -and ((Get-Date)-$script:LastTg[$Text]).TotalMinutes -lt $DedupMin){ return $false }
   $ok=$true
   $parts=Split-TgText $Text; $i=0
   foreach($p in $parts){
-    $i++; $b=@{ chat_id=$script:TgChat; text=$p }; if($Markup -and $i -eq $parts.Count){ $b.reply_markup=$Markup }
+    $i++; $b=@{ chat_id=$script:TgChat; text=$p }; if($Html){ $b.parse_mode='HTML' }; if($Markup -and $i -eq $parts.Count){ $b.reply_markup=$Markup }
     try{ Invoke-Tg 'sendMessage' $b 15 | Out-Null }
     catch{ $ok=$false; Log "Telegram: не удалось отправить ($($_.Exception.Message))" -NoAction }
   }
@@ -89,8 +89,34 @@ function New-TgKeyboard([string]$Spec,[string]$Prefix=''){
 }
 # ---- Пункт 22: постоянная клавиатура с русскими кнопками (ReplyKeyboardMarkup) ----
 # Кнопка отправляет в чат свой текст — его разбирает Parse-Command, как набранный вручную.
-# Ряды через «;», кнопки через «|». Меню команд с «/» (setMyCommands) не трогаем.
-$script:TgReplyButtons='Статус|Стоп|Старт;Прими|Передай ответ|Передай всё равно;Перешли ответ в Antigravity|Перешли отчёт в Gemini;Что ответил Джемини|Отправь заново|Выключи скрипт;Напиши|Скрин|Лимиты|Помощь'
+# Ряды через «;», кнопки через «|». Группы: файлы · Antigravity · Gemini · управление · прочее.
+# Эмодзи в начале надписи Parse-Command отбрасывает — команду можно набрать и без него.
+$script:TgReplyButtons='📂 Отчёт в Gemini|📂 Ответ в Antigravity;🛠 Antigravity: текст|✨ Gemini: текст|✨ Ответ Gemini;ℹ️ Статус|⏸ Стоп|▶️ Старт;📸 Скрин|📊 Лимиты|❓ Помощь'
+# Меню «/» (setMyCommands) — в том же смысловом порядке; регистрируется при запуске (Init-Tg).
+$script:TgMenu=@(
+  @('togemini','📂 Последний отчёт снова в Gemini'),
+  @('toag','📂 Весь ответ Gemini в Antigravity'),
+  @('ag','🛠 Текст в Antigravity и ответ агента'),
+  @('relay','🛠 Блок Markdown в Antigravity'),
+  @('force','🛠 Передать совпавший ответ принудительно'),
+  @('accept','🛠 Нажать «Accept all»'),
+  @('autoallow','🛠 Автоподтверждение: вкл / выкл'),
+  @('gemini','✨ Текст в Gemini и его ответ'),
+  @('answer','✨ Последний ответ Gemini'),
+  @('status','ℹ️ Состояние GGskript'),
+  @('stop','⏸ Стоп (слушаю Telegram)'),
+  @('resume','▶️ Старт / продолжить'),
+  @('exit','⏻ Выключить скрипт'),
+  @('shot','📸 Снимок экрана'),
+  @('limits','📊 Лимиты Gemini и Antigravity'),
+  @('shutdown','⏻ Выключить компьютер'),
+  @('windows','🪟 Авто-закрываемые окна'),
+  @('help','❓ Справка'))
+function Get-TgMenuCommands{ @($script:TgMenu | ForEach-Object { [ordered]@{ command=$_[0]; description=$_[1] } }) }
+function Register-TgCommands{
+  if(!$script:TgToken){ return $false }
+  try{ Invoke-Tg 'setMyCommands' @{ commands=@(Get-TgMenuCommands) } 15 | Out-Null; $true }catch{ Log "Telegram setMyCommands: $($_.Exception.Message)" -NoAction; $false }
+}
 function Get-TgReplyLabels([string]$Spec=$script:TgReplyButtons){ @(($Spec -split '[;|]') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 function New-TgReplyKeyboard([string]$Spec=$script:TgReplyButtons){
   $kb=New-Object System.Collections.ArrayList
@@ -101,6 +127,7 @@ function New-TgReplyKeyboard([string]$Spec=$script:TgReplyButtons){
   [ordered]@{ keyboard=$kb; resize_keyboard=$true; is_persistent=$true }
 }
 # Разметка для стартового сообщения и «помощи»: $null, если TgReplyKeyboard выключен.
+function ConvertTo-TgHtml([string]$T){ ([string]$T).Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;') }
 function Get-TgReplyMarkup{ if($Cfg.TgReplyKeyboard -eq $false){ return $null }; New-TgReplyKeyboard }
 function Get-TgButtonLabels([string]$Spec){ $h=[ordered]@{}; foreach($b in ($Spec -split '[;|]')){ $kv=$b -split '=',2; if($kv.Count -eq 2){ $h[$kv[1].Trim()]=$kv[0].Trim() } }; $h }
 # Отправка с кнопками (на последней части) и ответом-цитатой; возвращает message_id последней части (0 — неизвестен), $null — ошибка.
