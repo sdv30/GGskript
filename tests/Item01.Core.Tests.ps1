@@ -8,7 +8,7 @@ Describe 'Пункт 1: настройки по умолчанию' -Tag Item01 
     $d.GeminiQuietSec | Should -Be 8; $d.AgInputX | Should -Be 0.38; $d.AgInputY | Should -Be 0.93
     $d.CodeBlockLang | Should -Be 'Markdown,XML'; $d.CodeBlockPick | Should -Be 'last'; $d.ModelMustContain | Should -Be 'Argon'
     $d.AcceptAllEverySec | Should -Be 12; $d.AgQueueWaitSec | Should -Be 30; $d.QuotaEveryMin | Should -Be 10
-    $d.GeminiWebThreshold | Should -Be 100; $d.AgThreshold | Should -Be 0; $d.AgGroup | Should -Be 'Gemini Models'
+    $d.GeminiWebThreshold | Should -Be 100; $d.AgThreshold | Should -Be 1; $d.AgGroup | Should -Be 'Gemini Models'
     $d.IgnoreBefore | Should -Be '2026-10-18 00:00'
     @($d.AgProcess) | Should -Be @('Antigravity IDE','Antigravity')
     $d.Downloads | Should -Be (Join-Path 'U' 'Downloads')

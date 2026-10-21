@@ -85,7 +85,7 @@ function Get-DefaultSettings{
     GeminiWebThresholdIs = 'used'
     AgCheck              = $true
     AgGroup              = 'Gemini Models'
-    AgThreshold          = 0           # стоп только когда осталось 0%
+    AgThreshold          = 1           # стоп когда осталось 1% или меньше
     AgThresholdIs        = 'remaining'
     QuotaReWarnStep      = 5
     AutoResume           = $true    # после сброса лимита (время со страницы лимитов / Antigravity) перепроверить, вернуть модель ModelMustContain и продолжить
