@@ -16,7 +16,8 @@
   }
 }
 Describe 'Пункт 24: запуск без «хвоста» — только самый новый файл' -Tag Item24 {
-  BeforeEach { Mock Gem-IsGenerating { $false }; Mock Gem-PeekAnswer { $script:PK }; Mock Get-AgHealth { @{ ok=$true; kind="ok"; reasons=@() } }; Mock Find-QueuedItems { @() }; $script:PK=$null; $script:LastStartReport=""; $script:StopAnnounced=$false;
+  BeforeEach { Mock Gem-IsGenerating { $false }; Mock Gem-PeekAnswer { $script:PK }; Mock Get-AgHealth { @{ ok=$true; kind="ok"; reasons=@() } }; Mock Find-QueuedItems { @() }; Mock Check-Quotas {}; Mock Quota-Blocked { '' }; $script:Q=$null; $script:QStopG=$false; $script:QStopA=$false;   # герметично: реальные лимиты ПК не влияют на тест
+    $script:PK=$null; $script:LastStartReport=""; $script:StopAnnounced=$false;
     $script:TgToken='TEST'; $script:TgChat='42'; $script:TgCalls=New-Object System.Collections.ArrayList; $script:MsgId=100
     $script:TgPrompts.Clear(); $script:Queue.Clear(); $script:Busy=$false; $script:Paused=$false; $script:Held=@{}; $script:Adopted=@{}; $script:TriageNeeded=$true; $script:PausedSince=$null
     $Cfg.StartupNewestOnly=$true; $Cfg.StartupAskNewest=$true; $Cfg.StartupTriagePauseMin=10; $Cfg.QuotaEveryMin=0; $Cfg.IgnoreBefore=''; $Cfg.TgReplyKeyboard=$true
