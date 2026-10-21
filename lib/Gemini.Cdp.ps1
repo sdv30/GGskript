@@ -58,8 +58,14 @@ $script:GemJs=@'
       if(txt(e).length){ document.execCommand('selectAll',false,null); document.execCommand('delete',false,null); }
       return document.activeElement===e||e.contains(document.activeElement); }
     case 'chips': return qa('.attachment-preview-wrapper, uploader-file-preview, [data-test-id="file-preview"]').map(e=>((e.getAttribute('aria-label')||'')+' '+txt(e)).trim());
-    case 'openUpload': { const b=qa(S.upload).filter(vis).pop(); if(!b) return 'nobtn'; b.click(); return 'ok'; }
-    case 'clickUploadItem': { const it=qa(S.uploadItem).filter(vis).find(x=>/upload|загруз|файл|file/i.test(txt(x)+' '+(x.getAttribute('aria-label')||''))); if(!it) return false; it.click(); return true; }
+    // CSS-флаг i не меняет регистр кириллицы («Загрузка» ≠ «загруз»), поэтому кнопка ищется регуляркой в JS (Gemini RU: «Загрузка и инструменты»)
+    case 'openUpload': { const rx=/загрузк|загрузить|меню загрузки|upload|add files|добавить файл/i;
+      let b=qa('button').filter(vis).find(x=>rx.test((x.getAttribute('aria-label')||'')+''));
+      if(!b){ try{ b=qa(S.upload).filter(vis).pop(); }catch(e){} }
+      if(!b) return 'nobtn'; if(b.getAttribute('aria-expanded')!=='true') b.click(); return 'ok'; }
+    case 'clickUploadItem': { const its=qa(S.uploadItem).filter(vis); const lab=x=>txt(x)+' '+(x.getAttribute('aria-label')||'');
+      const it=its.find(x=>x.getAttribute('data-test-id')==='local-images-files-uploader-button')||its.find(x=>/загрузить файл|upload file/i.test(lab(x)))||its.find(x=>/upload|загруз|файл|file/i.test(lab(x))&&!/диск|drive|фото|photo/i.test(lab(x)));
+      if(!it) return false; it.click(); return true; }
     case 'sendEnabled': { return qa(S.send).some(x=>vis(x)&&!x.disabled&&x.getAttribute('aria-disabled')!=='true'); }
     case 'clickSend': { const b=qa(S.send).find(x=>vis(x)&&!x.disabled&&x.getAttribute('aria-disabled')!=='true'); if(!b) return false; b.click(); return true; }
     case 'state': { const r=last(); const t=r?txt(r):''; return {gen:qa(S.stop).some(vis), n:qa(S.response).length, len:t.length, tail:t.slice(-400)}; }
@@ -150,7 +156,8 @@ function Invoke-Cdp{
   while($true){
     $left=[int](($end-(Get-Date)).TotalMilliseconds); if($left -le 0){ throw "CDP: нет ответа на $Method за $TimeoutSec сек" }
     $m=(Cdp-ReceiveText $Conn $left) | ConvertFrom-Json
-    if($null -eq $m.id -or [int]$m.id -ne $id){ continue }   # события и чужие ответы
+    if($null -eq $m.id){ if($m.method -and $Conn.events -is [System.Collections.IList]){ [void]$Conn.events.Add($m) }; continue }   # события (копим, если запрошено)
+    if([int]$m.id -ne $id){ continue }   # чужие ответы
     if($m.error){ throw "CDP $($Method): $($m.error.message)" }
     return $m.result
   }
@@ -204,15 +211,29 @@ function GemCdp-SendFile([string]$Path,[string]$Name){
     if(-not (Eval-Js 'ready' -Conn $c)){ throw 'нет поля ввода' }
     if(-not (Eval-Js 'focusClear' -Conn $c)){ throw 'фокус в поле ввода не подтверждён' }
     $pBefore=[int](Eval-Js 'prompts' -Conn $c); $before=[int](Eval-Js 'state' -Conn $c).n
+    # Диалог выбора файла перехватывается (окно Windows не открывается); событие Page.fileChooserOpened даёт backendNodeId поля <input type=file>,
+    # которое Gemini создаёт на лету и часто не вставляет в DOM — поэтому файл ставится по backendNodeId, а поиск в DOM только запасной.
+    $c.events=New-Object System.Collections.ArrayList
+    try{ [void](Invoke-Cdp 'Page.enable' @{} -Conn $c) }catch{}
     [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$true } -Conn $c)
     try{
-      if((Eval-Js 'openUpload' -Conn $c) -ne 'ok'){ throw 'кнопка «+» не найдена' }
-      Start-Sleep -Milliseconds 600; [void](Eval-Js 'clickUploadItem' -Conn $c); Start-Sleep -Milliseconds 600
-      $doc=Invoke-Cdp 'DOM.getDocument' @{ depth=-1; pierce=$true } -Conn $c
-      $ids=@((Invoke-Cdp 'DOM.querySelectorAll' @{ nodeId=$doc.root.nodeId; selector='input[type=file]' } -Conn $c).nodeIds)
-      if(-not $ids.Count){ throw 'поле выбора файла не найдено' }
-      [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); nodeId=$ids[-1] } -Conn $c)
-    } finally { try{ [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$false } -Conn $c) }catch{} }
+      if((Eval-Js 'openUpload' -Conn $c) -ne 'ok'){ throw 'кнопка «+» («Загрузка и инструменты») не найдена' }
+      $clicked=$false; for($i=0;$i -lt 8 -and -not $clicked;$i++){ Start-Sleep -Milliseconds 400; $clicked=[bool](Eval-Js 'clickUploadItem' -Conn $c) }
+      if(-not $clicked){ throw 'пункт меню «Загрузить файлы» не найден' }
+      $bk=$null; $t1=Get-Date
+      while(-not $bk -and ((Get-Date)-$t1).TotalSeconds -lt 6){
+        $ev=@($c.events | Where-Object { $_.method -eq 'Page.fileChooserOpened' }) | Select-Object -Last 1
+        if($ev -and $ev.params.backendNodeId){ $bk=[int]$ev.params.backendNodeId; break }
+        Start-Sleep -Milliseconds 300; [void](Invoke-Cdp 'Runtime.evaluate' @{ expression='1'; returnByValue=$true } -Conn $c)   # прокачать события
+      }
+      if($bk){ [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); backendNodeId=$bk } -Conn $c) }
+      else{
+        $doc=Invoke-Cdp 'DOM.getDocument' @{ depth=-1; pierce=$true } -Conn $c
+        $ids=@((Invoke-Cdp 'DOM.querySelectorAll' @{ nodeId=$doc.root.nodeId; selector='input[type=file]' } -Conn $c).nodeIds)
+        if(-not $ids.Count){ throw 'поле выбора файла не найдено (диалог не открылся)' }
+        [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); nodeId=$ids[-1] } -Conn $c)
+      }
+    } finally { try{ [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$false } -Conn $c) }catch{}; $c.events=$null }
     $base=$Name -replace '\.md$',''; $ok=$false; $t0=Get-Date
     while(((Get-Date)-$t0).TotalSeconds -lt $Cfg.AttachTimeoutSec -and -not $ok){ Start-Sleep -Milliseconds 700
       $ch=@(Eval-Js 'chips' -Conn $c | ForEach-Object { [string]$_ }); $ok=(@($ch | Where-Object { $_ -like "*$base*" }).Count -gt 0) -and [bool](Eval-Js 'sendEnabled' -Conn $c) }
