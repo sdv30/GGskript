@@ -629,6 +629,7 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
                 [void](New-TgPrompt -Kind 'exit' -Text "Выключить GGskript совсем? Процесс завершится, и из Telegram его снова запустить будет НЕЛЬЗЯ — только ярлыком GGskript на ПК.`nЕсли нужно просто остановиться — «Стоп» (процесс останется и будет слушать Telegram)." -Buttons 'Да, выключить скрипт=yes|Нет=no' -TimeoutMin ([double]$Cfg.ShutdownConfirmMin) -ReplyTo $ReplyTo) }
     'resume'  { $wasP=$script:Paused; if($wasP){ Set-Pause $false 'команда' }; $qb=Quota-Blocked; if($qb){ Quota-Override; Tg-Send "▶️ Ок, игнорирую остановку по лимитам ($qb), пока не станет хуже ещё на $($Cfg.QuotaReWarnStep) пунктов." | Out-Null }
       if($script:LimitStop){ Resume-Work 'по команде' } elseif(-not $qb -and -not $wasP){ Tg-Send "▶️ Продолжаю работу. Следующий файл: $(if($n=Next-FileName){$n}else{'новых файлов пока нет'})" | Out-Null } }
+    'autoaccept' { if($null -ne $c.on){ Set-AutoAccept ([bool]$c.on) $Source } else { Tg-Send "Автопринятие «Accept all»: $(if($Cfg.AutoAcceptAll){'ВКЛ'}else{'выкл'}). «автопринятие вкл» / «автопринятие выкл»." | Out-Null } }
     'autoallow' { if($null -ne $c.on){ Set-AutoAllow ([bool]$c.on) $Source } else { Tg-Send "Автоподтверждение запросов Antigravity: $(if($Cfg.AutoAllowPrompts){'ВКЛ'}else{'выкл'}). Включить/выключить: «автоподтверждение вкл» / «автоподтверждение выкл»." | Out-Null } }
     'shot'    { try{ Send-Screenshot }catch{ Tg-Send "Не удалось сделать скриншот: $($_.Exception.Message)" | Out-Null } }
     'confirm' { if($Source -eq 'tg' -and $ReplyTo -and (Resolve-TextAnswer 'confirm' $ReplyTo)){ return }
@@ -796,14 +797,24 @@ function Invoke-GitCheckpoint{
 function Try-AcceptAll([switch]$Report){
   if($script:Paused){ return $false }
   $h=Ag-GetWindow; if(!$h){ return $false }
+  # пункт 45: в Antigravity «Accept all» — <span> с onClick, не Button: UIA его не видит. С CDP — только DOM (span), агент не должен работать.
+  if($Cfg.AgTransport -eq 'cdp'){
+    $d=$null; try{ $d=AgCdp-AcceptAll -Dry }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
+    if($d){
+      if(-not $d.found -or $d.busy){ return $false }
+      if(-not (Invoke-GitCheckpoint) -and $Cfg.GitCheckpointRequired){ Tg-Send '⛔ Accept all НЕ нажат: не удался git-чекпоинт (GitCheckpointRequired=true).' -DedupMin 30 | Out-Null; return $false }
+      if(Test-StopNow){ return $false }
+      $r=$null; try{ $r=AgCdp-AcceptAll }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
+      if($r -and $r.ok){ $nf=if($null -ne $r.files){ [string]$r.files } else { '?' }; Log "✅ Accept all нажат ($nf files) (CDP, без фокуса)"; if($Report){ Tg-Send "✅ Accept all нажат ($nf files)" | Out-Null }; return $true }
+      return $false
+    }
+  }
   if(!(Find-AcceptAll $h)){ return $false }
   if(-not (Invoke-GitCheckpoint) -and $Cfg.GitCheckpointRequired){ Tg-Send '⛔ Accept all НЕ нажат: не удался git-чекпоинт (GitCheckpointRequired=true).' -DedupMin 30 | Out-Null; return $false }
   $ok=$false; $how=''
-  # пункт 27B: без фокуса — сначала DOM-клик через CDP (AgTransport=cdp), потом UIA Invoke без вывода окна; только потом прежний путь
-  if($Cfg.AgTransport -eq 'cdp'){ try{ if(AgCdp-ClickText $Cfg.AcceptAllName){ $ok=$true; $how=' (CDP, без фокуса)' } }catch{ Log "Accept all через CDP: $($_.Exception.Message)" } }
   if(-not $ok -and $Cfg.AgInvokeNoFocus){ try{ $el=Find-AcceptAll $h; if($el -and (Uia-Invoke $el)){ $ok=$true; $how=' (UIA Invoke, без фокуса)' } }catch{} }
   if(-not $ok){ try{ Invoke-WithFocus $h { $el=Find-AcceptAll $h; if($el -and (Uia-ClickEl $el -PreferInvoke)){ $script:AccOk=$true } else { $script:AccOk=$false } }; $ok=[bool]$script:AccOk }catch{ return $false } }
-  if($ok){ Log "Нажал 'Accept all' в Antigravity$how"; if($Report){ Tg-Send '🖱 Нажал «Accept all» в Antigravity' | Out-Null } }
+  if($ok){ Log "✅ Accept all нажат (? files)$how"; if($Report){ Tg-Send '✅ Accept all нажат' | Out-Null } }
   $ok
 }
 function Find-QueuedItems($h){
@@ -857,7 +868,7 @@ function Pump{ Poll-Tg; Sweep-TgPrompts; try{ Check-Shutdown }catch{ Log "Вык
   # пункт 38: «Стоп» посреди любого рабочего шага (вставка, копирование, прикрепление, ожидание) — прерываем его сразу
   if($script:Paused -and $script:Busy){ throw [GG.RelayPausedException]::new('СТОП — текущее действие прервано') }
   if($script:Paused){ return }   # на стопе: никаких фоновых действий (автоподтверждение, Accept all, ответ Antigravity)
-  Invoke-AuxDuringWait; Invoke-AutoAllowTick; try{ Check-AgWatch }catch{ if((Get-ErrorKind $_) -eq 'paused'){ throw }; Log "Ответ Antigravity: $($_.Exception.Message)" } }
+  Invoke-AuxDuringWait; Invoke-AutoAllowTick; Invoke-AutoAcceptTick; try{ Check-AgWatch }catch{ if((Get-ErrorKind $_) -eq 'paused'){ throw }; Log "Ответ Antigravity: $($_.Exception.Message)" } }
 # Ожидание ответа Gemini, которое «Стоп» может прервать (пункт 25B). Внутри — только чтение окна Gemini.
 function Wait-GemAnswerStoppable($ctx){ $script:AbortOnStop=$true; try{ Gem-WaitAnswer $ctx } finally { $script:AbortOnStop=$false } }
 # AcceptAllDuringWait: во время долгого ожидания ответа Gemini нажимать Accept all (и смотреть очередь Antigravity).
@@ -901,6 +912,23 @@ function Invoke-AutoAllowTick{
   if(((Get-Date)-$script:LastAutoAllow).TotalSeconds -lt [Math]::Max(1,[double]$Cfg.AutoAllowEverySec)){ return }
   $script:LastAutoAllow=Get-Date; $script:InAutoAllow=$true
   try{ try{ [void](Try-AutoAllow) }catch{ Log "Автоподтверждение: $($_.Exception.Message)" } } finally { $script:InAutoAllow=$false }
+}
+# пункт 45: автопринятие «Accept all» из Pump (и во время ожидания Gemini) — только через CDP (без фокуса и мыши), только когда агент не работает.
+$script:LastAutoAccept=Get-Date; $script:InAutoAccept=$false
+function Invoke-AutoAcceptTick{
+  if(Test-StopNow){ return }
+  if(-not $Cfg.AutoAcceptAll -or $Cfg.AgTransport -ne 'cdp' -or $script:InAutoAccept -or [int]$script:FocusDepth -gt 0){ return }
+  if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return }
+  if($Cfg.AcceptAllEverySec -le 0 -or ((Get-Date)-$script:LastAutoAccept).TotalSeconds -lt $Cfg.AcceptAllEverySec){ return }
+  $script:LastAutoAccept=Get-Date; $script:LastAccept=Get-Date; $script:InAutoAccept=$true
+  try{ try{ [void](Try-AcceptAll -Report) }catch{ Log "Accept all: $($_.Exception.Message)" } } finally { $script:InAutoAccept=$false }
+}
+function Set-AutoAccept([bool]$On,[string]$Source='pc'){
+  $Cfg.AutoAcceptAll=$On
+  try{ Save-SettingValue $Cfg.SettingsFile 'AutoAcceptAll' $On }catch{ Log "Автопринятие: не удалось сохранить в relay_settings.json ($($_.Exception.Message))" }
+  Log "Автопринятие «Accept all»: $(if($On){'ВКЛ'}else{'выкл'}) ($Source)"
+  Tg-Send "Автопринятие «Accept all»: $(if($On){'ВКЛ — жму, когда агент закончил (никогда «Reject all»)'}else{'выкл'})." | Out-Null
+  try{ Write-Status -Force }catch{}
 }
 function Nap($sec){ $end=(Get-Date).AddSeconds($sec); while((Get-Date) -lt $end){ Pump; $r=($end-(Get-Date)).TotalMilliseconds; if($r -gt 0){ Start-Sleep -Milliseconds ([int][Math]::Min(1000,$r)) } } }
 
@@ -954,7 +982,7 @@ function Write-Status([switch]$Force){
       resumeAt= if($script:AutoPlan){ Format-PlanTime $script:AutoPlan.at } else { '' }; resumeWhy= if($script:AutoPlan){ [string]$script:AutoPlan.why } else { '' }
       lastAction= if($script:LastAction){ $script:LastAction.ToString('HH:mm:ss') } else { '' }
       pending=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -in @('sent','answered','resend','stale','operator') } | ForEach-Object { "$_ ($(Get-StageRu (Get-Stage $_)))" })
-      transport="Gemini=$($Cfg.GeminiTransport), AG=$($Cfg.AgTransport)"; autoAllow=[bool]$Cfg.AutoAllowPrompts
+      transport="Gemini=$($Cfg.GeminiTransport), AG=$($Cfg.AgTransport)"; autoAllow=[bool]$Cfg.AutoAllowPrompts; autoAccept=[bool]$Cfg.AutoAcceptAll
       quotaTime= if($q){ [string]$q.time } else { '' }
       gwebCur= if($q -and $q.gweb){ $q.gweb.cur } else { $null }; gwebWk= if($q -and $q.gweb){ $q.gweb.wk } else { $null }
       gwebCurReset= if($q -and $q.gweb){ [string]$q.gweb.curReset } else { '' }; gwebWkReset= if($q -and $q.gweb){ [string]$q.gweb.wkReset } else { '' }
@@ -1509,7 +1537,7 @@ function Invoke-MainStep{
   try{
     $agDown= $script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')   # к зависшему окну UIA не обращаемся
     if(-not $agDown -and -not $script:Paused -and $Cfg.AgQueueCheckSec -gt 0 -and ((Get-Date)-$script:LastQueueCheck).TotalSeconds -ge $Cfg.AgQueueCheckSec){ $script:LastQueueCheck=Get-Date; try{ Check-AgQueue }catch{ Log "Очередь Antigravity: $($_.Exception.Message)" }; if($Cfg.AgTransport -eq 'mailbox'){ try{ [void](Check-MailboxAcks) }catch{} } }
-    if(-not $agDown -and -not $script:Paused -and $Cfg.AcceptAllEverySec -gt 0 -and ((Get-Date)-$script:LastAccept).TotalSeconds -ge $Cfg.AcceptAllEverySec){ $script:LastAccept=Get-Date; try{ Try-AcceptAll -Report | Out-Null }catch{ Log "Accept all: $($_.Exception.Message)" } }
+    if(-not $agDown -and -not $script:Paused -and $Cfg.AcceptAllEverySec -gt 0 -and ((Get-Date)-$script:LastAccept).TotalSeconds -ge $Cfg.AcceptAllEverySec){ $script:LastAccept=Get-Date; if($Cfg.AutoAcceptAll){ try{ Try-AcceptAll -Report | Out-Null }catch{ Log "Accept all: $($_.Exception.Message)" } } }
     Nap $Cfg.PollSec
   }catch{ if((Get-ErrorKind $_) -eq 'stop'){ Log 'Остановлено.'; return 'stop' }; Log "Ошибка в цикле: $($_.Exception.Message)" }
   'ok'

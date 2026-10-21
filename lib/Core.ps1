@@ -59,6 +59,7 @@ function Get-DefaultSettings{
     AgSendNowName    = '^(Send Now|Send now|Отправить сейчас)$'
     AcceptAllName    = '^(Accept all|Принять все)$'
     AutoAllowPrompts = $false       # автоподтверждение запросов разрешения Antigravity («Allow running …?» → «Yes, allow this time» + Submit); флажок в панели / «автоподтверждение вкл|выкл»
+    AutoAcceptAll    = $true        # сам нажимать «Accept all» внизу панели агента, когда агент закончил (флажок в панели / «автопринятие вкл|выкл»); «Reject all» — никогда
     AutoAllowEverySec= 3            # как часто проверять запрос разрешения (сек)
     AutoAllowOptionRx= '^\s*(1[\s.)]*)?(Yes,\s*allow this time|Да,\s*разрешить\s+(в этот раз|один раз|сейчас))\s*$'   # ТОЛЬКО разовое разрешение; «always»/«No» отсекаются жёстко в коде
     AutoAllowSubmitRx= '^\s*(Submit|Подтвердить)\s*(\u21B5|\(Enter\))?\s*$'   # в Antigravity кнопка «Submit ↵» (data-testid=interaction-continue-button)
@@ -596,6 +597,13 @@ function Parse-Command{
     if($tl -match '^(cancel|отмена|abort)$'){ return @{k='shutdowncancel'} }; if($tl -match '^(status|статус)$'){ return @{k='shutdownstatus'} }
     return @{k='shutdown'; spec=(ConvertFrom-ShutdownTail $tl)} }
   if($n -match "^\s*(?:пожалуйста,?\s+)?(?:выключи(?:ть)?|выруби(?:ть)?|отключи(?:ть)?)\s+$pcw(?:\s+(.*?))?\s*[.!]*\s*$"){ return @{k='shutdown'; spec=(ConvertFrom-ShutdownTail ([string]$matches[1]))} }
+  # автопринятие «Accept all»: «автопринятие вкл|выкл», /autoaccept on|off
+  if($t -match '^/autoaccept(?:@\S+)?(?:\s+(\S+))?\s*$' -or $n -match "^\s*авто\s*-?\s*приняти\w*(?:\s+(\S+))?$end"){
+    $a=[string]$matches[1]
+    if($a -match '^(вкл\w*|on|да|1)$'){ return @{k='autoaccept'; on=$true} }
+    if($a -match '^(выкл\w*|откл\w*|off|нет|0)$'){ return @{k='autoaccept'; on=$false} }
+    return @{k='autoaccept'; on=$null}
+  }
   # автоподтверждение запросов разрешения Antigravity: «автоподтверждение вкл|выкл», /autoallow on|off; без аргумента — состояние
   if($t -match '^/autoallow(?:@\S+)?(?:\s+(\S+))?\s*$' -or $n -match "^\s*авто\s*-?\s*подтвержд\w*(?:\s+(\S+))?$end"){
     $a=([string]$matches[1]).ToLower() -replace 'ё','е'

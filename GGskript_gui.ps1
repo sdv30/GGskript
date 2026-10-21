@@ -91,11 +91,14 @@ $btnStart.ForeColor=[System.Drawing.Color]::ForestGreen; $btnPause.ForeColor=[Sy
 $chkAuto=New-Object System.Windows.Forms.CheckBox; $chkAuto.Text='Автоподтверждение запросов Antigravity'; $chkAuto.Font=$btnFont; $chkAuto.AutoSize=$true; $chkAuto.Margin=New-Object System.Windows.Forms.Padding(6,8,3,2)
 $chkAuto.Checked=[bool]$Cfg.AutoAllowPrompts
 $tip.SetToolTip($chkAuto,'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.')
+$chkAcc=New-Object System.Windows.Forms.CheckBox; $chkAcc.Text='Автопринятие Accept all'; $chkAcc.Font=$btnFont; $chkAcc.AutoSize=$true; $chkAcc.Margin=New-Object System.Windows.Forms.Padding(6,8,3,2)
+$chkAcc.Checked= if($null -ne $Cfg.AutoAcceptAll){ [bool]$Cfg.AutoAcceptAll } else { $true }
+$tip.SetToolTip($chkAcc,'Когда агент Antigravity закончил работу, сам нажимает «Accept all» внизу панели (через порт, без мыши). «Reject all» — никогда.')
 Add-BtnRow 'ФАЙЛЫ' @($btnRep,$btnFwd)
 Add-BtnRow 'ТЕКСТ И ОТВЕТЫ' @($btnAgT,$btnGmT,$btnAns)
 Add-BtnRow 'УПРАВЛЕНИЕ' @($btnStat,$btnPause,$btnStart)
 Add-BtnRow 'ПРОЧЕЕ' @($btnShot,$btnLim,$btnHelp)
-Add-BtnRow '' @($btnMore,$chkAuto)
+Add-BtnRow '' @($btnMore,$chkAuto,$chkAcc)
 # ---- пункт 39: режим без мыши (порты отладки) ----
 $btnCdpG=New-Btn '🌐 Chrome с портом' 'Открыть отдельный Chrome для Gemini с портом 9222 (обычный Chrome/Яндекс не закрываю). С портом скрипт работает без мыши.' 200
 $btnCdpA=New-Btn '🛠 Antigravity с портом' 'Перезапустить Antigravity с портом 9333 (спрошу подтверждение). С портом — без мыши и автоподтверждение надёжнее.' 200
@@ -222,6 +225,7 @@ function Update-Status{
     $lblState.Text=$v.State; $lblState.ForeColor=[System.Drawing.Color]::FromName($v.Color)
     $lblModel.Text=$v.Model; $lblFile.Text=$v.File; $lblLim.Text=$v.Limits; $lblAct.Text=$v.Action
     $tn= if($j.turn){ [string]$j.turn } else { Get-RelayTurn -Kind ([string]$j.kind) }; Set-TurnView (Get-TurnView $tn $true)
+    if($null -ne $j.autoAccept -and ((Get-Date)-$script:chkAccAt).TotalSeconds -gt 5 -and $chkAcc.Checked -ne [bool]$j.autoAccept){ $script:chkSync=$true; $chkAcc.Checked=[bool]$j.autoAccept; $script:chkSync=$false }
     if($null -ne $j.autoAllow -and ((Get-Date)-$script:chkAt).TotalSeconds -gt 5 -and $chkAuto.Checked -ne [bool]$j.autoAllow){ $script:chkSync=$true; $chkAuto.Checked=[bool]$j.autoAllow; $script:chkSync=$false }
   }catch{}
 }
@@ -277,6 +281,13 @@ $chkAuto.Add_CheckedChanged({
   $script:chkAt=Get-Date; $on=[bool]$chkAuto.Checked
   try{ Save-SettingValue (Join-Path $dir 'relay_settings.json') 'AutoAllowPrompts' $on }catch{}
   Send-Cmd $(if($on){'автоподтверждение вкл'}else{'автоподтверждение выкл'})
+})
+$script:chkAccAt=[datetime]::MinValue
+$chkAcc.Add_CheckedChanged({
+  if($script:chkSync){ return }
+  $script:chkAccAt=Get-Date; $on=[bool]$chkAcc.Checked
+  try{ Save-SettingValue (Join-Path $dir 'relay_settings.json') 'AutoAcceptAll' $on }catch{}
+  Send-Cmd $(if($on){'автопринятие вкл'}else{'автопринятие выкл'})
 })
 $doSend={ $t=$txtCmd.Text.Trim(); if($t){ Send-Cmd $t; $txtCmd.Clear() } }
 $btnSend.Add_Click($doSend)

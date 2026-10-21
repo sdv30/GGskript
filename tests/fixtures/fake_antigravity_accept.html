@@ -1,0 +1,10 @@
+<!doctype html><html><body>
+<div id="conversation"><div aria-label="Message input" contenteditable="true"></div>
+<div id="bar" class="flex"><span data-tooltip-id="toolbar-title-tooltip">6 Files With Changes</span>
+<div class="flex items-center gap-2"><span id="rej" class="cursor-pointer rounded px-1 text-sm">Reject all</span><span id="acc" class="cursor-pointer select-none rounded bg-primary px-1 text-sm">Accept all</span><span id="chev">&#x2C5;</span></div></div>
+<button id="cancel" aria-label="Cancel (Ctrl+D)" style="display:none">x</button></div>
+<script>
+window.__acc=0;window.__rej=0;window.__chev=0;
+document.getElementById('acc').onclick=()=>window.__acc++;document.getElementById('rej').onclick=()=>window.__rej++;document.getElementById('chev').onclick=()=>window.__chev++;
+window.reset=(show,busy)=>{window.__acc=0;window.__rej=0;window.__chev=0;document.getElementById('bar').style.display=show?'':'none';document.getElementById('cancel').style.display=busy?'':'none';};
+</script></body></html>

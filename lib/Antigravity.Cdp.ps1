@@ -38,6 +38,18 @@ $script:AgJs=@'
     case 'clickText': { const re=new RegExp(arg.rx,'i');
       const b=qa('button,[role="button"],a.monaco-button').filter(x=>vis(x)&&enabled(x)&&!isStop(x)).find(x=>re.test(txt(x).replace(/\s+/g,' ').trim())||re.test((x.getAttribute('aria-label')||'').trim()));
       if(!b) return false; b.click(); return true; }
+    case 'acceptAll': {
+      // «Accept all» в Antigravity — это <span class="... bg-primary ..."> с onClick, НЕ button (main.js 1.107), поэтому ищу и span.
+      // Только точный текст «Accept all»; «Reject all», шеврон-меню и всё похожее на отмену — никогда.
+      const norm=s=>((s||'')+'').replace(/\s+/g,' ').trim();
+      const busy=qa(S.busy).some(vis);
+      const fl=qa('span[data-tooltip-id="toolbar-title-tooltip"]').filter(vis).map(e=>norm(txt(e))).find(t=>/files? with changes/i.test(t))||'';
+      const m=fl.match(/(\d+)\s+files?/i), files=m?parseInt(m[1],10):null;
+      const cand=qa('span,button,[role="button"]').filter(x=>vis(x)&&enabled(x)&&/^accept all$/i.test(norm(txt(x)))&&!/reject|отклон/i.test(norm(txt(x)))&&!x.querySelector('span,button'));
+      if(!cand.length) return { found:false, busy, files };
+      if(busy) return { found:true, ok:false, busy, files, why:'агент ещё работает' };
+      if(arg.dry) return { found:true, ok:false, busy, files, why:'dry' };
+      cand[0].click(); return { found:true, ok:true, busy, files }; }
     case 'body': return document.body?txt(document.body):'';
     case 'allowPrompt': return (async()=>{
       // Автоподтверждение: вариант «Yes, allow this time» + Submit в той же панели. Никогда — always / No / Skip / Cancel.
@@ -110,6 +122,8 @@ function AgCdp-InputText($Conn){ [string](AgEval-Js 'inputText' -Conn $Conn) }
 function AgCdp-IsBusy{ [bool](AgEval-Js 'busy') }
 function AgCdp-HasButton([string]$Rx){ [bool]@(AgEval-Js 'buttons' @{ rx=$Rx }).Count }
 function AgCdp-ClickText([string]$Rx){ [bool](AgEval-Js 'clickText' @{ rx=$Rx }) }
+# «Accept all» (span с onClick) через DOM: @{found;ok;busy;files;why}. -Dry — только посмотреть.
+function AgCdp-AcceptAll([switch]$Dry){ AgEval-Js 'acceptAll' @{ dry=[bool]$Dry } }
 # Автоподтверждение через DOM (без фокуса): @{found;ok;opt;title;why}
 function AgCdp-AllowPrompt{ AgEval-Js 'allowPrompt' @{ opt=$Cfg.AutoAllowOptionRx; sub=$Cfg.AutoAllowSubmitRx; deny=($script:AutoAllowDenyRx -replace '^\(\?i\)','') } }
 # Отправка в чат агента. Те же гарантии, что у AgUia-Send: чужой/меняющийся текст — не трогаю; Enter — только когда наш текст в поле.
@@ -145,6 +159,6 @@ function AgCdp-Send{
 function Get-AgCdpDiag{
   $d=[ordered]@{ port=$Cfg.AgCdpPort; targets=@(); chat=$null; field=$null; busy=$null; accept=$null; err='' }
   try{ $d.targets=@(Cdp-HttpJson '/json/list' -Port $Cfg.AgCdpPort | ForEach-Object { "[$($_.type)] $(Format-Short ([string]$_.title) 60) — $(Format-Short ([string]$_.url) 80)" }) }catch{ $d.err="порт $($Cfg.AgCdpPort) не отвечает ($($_.Exception.Message))"; return $d }
-  try{ $c=Connect-AgCdp -Force; $d.chat=$c.title; $d.field=AgCdp-InputText $c; $d.busy=AgCdp-IsBusy; $d.accept=AgCdp-HasButton $Cfg.AcceptAllName }catch{ $d.err=$_.Exception.Message }
+  try{ $c=Connect-AgCdp -Force; $d.chat=$c.title; $d.field=AgCdp-InputText $c; $d.busy=AgCdp-IsBusy; $d.accept=[bool](AgCdp-AcceptAll -Dry).found }catch{ $d.err=$_.Exception.Message }
   $d
 }
