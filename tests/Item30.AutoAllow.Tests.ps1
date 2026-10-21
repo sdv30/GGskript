@@ -15,6 +15,7 @@ Describe 'Пункт 30: выбор варианта и кнопки (чиста
   }
   It 'кнопка: только Submit/Подтвердить' {
     Test-AutoAllowSubmit 'Submit' | Should -BeTrue; Test-AutoAllowSubmit 'Подтвердить' | Should -BeTrue
+    Test-AutoAllowSubmit "Submit $([char]0x21B5)" | Should -BeTrue; Test-AutoAllowSubmit "Submit$([char]0x21B5)" | Should -BeTrue; Test-AutoAllowSubmit 'Submit (Enter)' | Should -BeTrue; Test-AutoAllowSubmit "Continue $([char]0x21B5)" | Should -BeFalse
     foreach($t in 'Skip','Cancel (Ctrl+D)','Send message','Stop','Reject all','Отправить'){ Test-AutoAllowSubmit $t | Should -BeFalse -Because $t }
     $old=$Cfg.AutoAllowSubmitRx; try{ $Cfg.AutoAllowSubmitRx='.*'; Test-AutoAllowSubmit 'Skip' | Should -BeFalse; Test-AutoAllowSubmit 'Cancel' | Should -BeFalse } finally { $Cfg.AutoAllowSubmitRx=$old }
   }

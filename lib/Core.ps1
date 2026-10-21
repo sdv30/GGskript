@@ -61,7 +61,7 @@ function Get-DefaultSettings{
     AutoAllowPrompts = $false       # автоподтверждение запросов разрешения Antigravity («Allow running …?» → «Yes, allow this time» + Submit); флажок в панели / «автоподтверждение вкл|выкл»
     AutoAllowEverySec= 3            # как часто проверять запрос разрешения (сек)
     AutoAllowOptionRx= '^\s*(1[\s.)]*)?(Yes,\s*allow this time|Да,\s*разрешить\s+(в этот раз|один раз|сейчас))\s*$'   # ТОЛЬКО разовое разрешение; «always»/«No» отсекаются жёстко в коде
-    AutoAllowSubmitRx= '^\s*(Submit|Подтвердить)\s*$'
+    AutoAllowSubmitRx= '^\s*(Submit|Подтвердить)\s*(\u21B5|\(Enter\))?\s*$'   # в Antigravity кнопка «Submit ↵» (data-testid=interaction-continue-button)
     TgOffsetFile     = (Join-Path $Root 'relay_tg_offset.txt')
     QuotaEveryMin        = 10
     GeminiWebCheck       = $true

@@ -43,15 +43,15 @@ $script:AgJs=@'
       // Автоподтверждение: вариант «Yes, allow this time» + Submit в той же панели. Никогда — always / No / Skip / Cancel.
       const ore=new RegExp(arg.opt,'i'), sre=new RegExp(arg.sub,'i'), deny=new RegExp(arg.deny,'i');
       const norm=s=>((s||'')+'').replace(/\s+/g,' ').trim();
-      const subIn=root=>qa('button,[role="button"],a.monaco-button').filter(b=>root.contains(b)&&vis(b)&&!isStop(b)&&!deny.test(label(b))&&sre.test(norm(txt(b))||norm(b.getAttribute('aria-label'))));
+      const subIn=root=>qa('button,[role="button"],a.monaco-button').filter(b=>root.contains(b)&&vis(b)&&!isStop(b)&&!deny.test(label(b))&&(sre.test(norm(txt(b)).replace(/\u21B5/g,'').trim())||sre.test(norm(b.getAttribute('aria-label')))||(b.getAttribute('data-testid')==='interaction-continue-button'&&/submit|подтверд/i.test(norm(txt(b))))));
       const rowOf=p=>{ const cl=p.closest('label,button,li,[role="radio"],[role="option"],[role="menuitemradio"],[role="button"]'); return (cl&&norm(txt(cl)).length<=160&&!deny.test(norm(txt(cl))))?cl:p; };
       // все видимые варианты; беру тот, у которого Submit ближе всего по дереву (не строку истории чата с тем же текстом)
       const tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT); let n, best=null, seen=new Set();
       while((n=tw.nextNode())){ if(!/allow|разреш/i.test(n.data)) continue; const p=n.parentElement; if(!p||seen.has(p)||!vis(p)) continue; seen.add(p);
         const t=norm(n.data), pt=norm(txt(p));
         if(!((t&&t.length<=120&&ore.test(t)&&!deny.test(t))||(pt.length<=120&&ore.test(pt)&&!deny.test(pt)))) continue;
-        const row=rowOf(p); let box=row, k=0; while(box&&k<=8&&!subIn(box).length){ box=box.parentElement; k++; }
-        if(box&&k<=8&&(!best||k<best.k)) best={row,box,k};
+        const row=rowOf(p); let box=row, k=0; while(box&&k<=14&&!subIn(box).length){ box=box.parentElement; k++; }
+        if(box&&k<=14&&(!best||k<best.k)) best={row,box,k};
         else if(!best) best={row,box:null,k:99}; }
       if(!best) return { found:false };
       const row=best.row, box=best.box;
