@@ -39,12 +39,71 @@ function Get-LastDoneName{ $f=@(Get-Files -All | Where-Object { (Get-Stage $_.Na
 
 # ---------- Папка Downloads ----------
 function Get-IgnoreBeforeDt{ if($Cfg.IgnoreBefore){ try{ [datetime]::ParseExact($Cfg.IgnoreBefore,'yyyy-MM-dd HH:mm',$null) }catch{ $null } } else { $null } }
-function Get-Files([switch]$All){
+function Get-Files([switch]$All,[switch]$AllProjects){
   $ib=Get-IgnoreBeforeDt
+  $ap= if($AllProjects){ '' } else { Get-ActiveProjectNow }
+  $age=[double]$Cfg.MaxReportAgeHours; $lim=(Get-Date).AddHours(-$age)
   @(Get-ChildItem -LiteralPath $Cfg.Downloads -File -Filter '*.md' -EA 0 | Where-Object {
-      $_.Name -match $Cfg.Pattern -and $_.Length -gt 0 -and ($All -or -not $ib -or $_.LastWriteTime -ge $ib -or ((Get-Stage $_.Name) -in @('sent','answered','resend','stale')))
-    } | ForEach-Object { [pscustomobject]@{ Name=$_.Name; FullName=$_.FullName; LastWriteTime=$_.LastWriteTime; Key=(Get-SortKey $_.Name $Cfg.Pattern) } } |
+      $_.Name -match $Cfg.Pattern -and $_.Length -gt 0 -and (-not $ap -or (ProjOf $_.Name) -eq $ap) -and
+      ($All -or ((-not $ib -or $_.LastWriteTime -ge $ib) -and ($age -le 0 -or (Get-ReportFileTime $_) -ge $lim)) -or ((Get-Stage $_.Name) -in @('sent','answered','resend','stale')))
+    } | ForEach-Object { [pscustomobject]@{ Name=$_.Name; FullName=$_.FullName; LastWriteTime=$_.LastWriteTime; CreationTime=$_.CreationTime; Time=(Get-ReportFileTime $_); Key=(Get-SortKey $_.Name $Cfg.Pattern) } } |
     Sort-Object Key,LastWriteTime)
+}
+# ---------- Пункт 43: активный проект и очередь по номеру шага ----------
+# Проект: из заголовка последнего блока Gemini (St.activeProject); пока его нет — проект самого свежего отчёта (по времени файла, не старше MaxReportAgeHours).
+# Если в Downloads появился отчёт ДРУГОГО проекта новее последней вставки в Antigravity — переключаюсь на него (пользователь сменил проект).
+function Get-ActiveProjectNow{
+  if($script:InActiveProject){ return [string]$script:St.activeProject }
+  $script:InActiveProject=$true
+  try{
+    if(-not $script:St){ return '' }
+    $known= if($script:St){ [string]$script:St.activeProject } else { '' }
+    $all=@(Get-ReportCandidates -Files @(Get-ChildItem -LiteralPath $Cfg.Downloads -File -Filter '*.md' -EA 0) -Pattern $Cfg.Pattern -MaxAgeHours ([double]$Cfg.MaxReportAgeHours))
+    $nw=$all | Select-Object -Last 1
+    if(-not $known){ if($nw){ Set-ActiveProject $nw.Project "самый свежий отчёт $($nw.Name)" }; return [string]$nw.Project }
+    if($nw -and $nw.Project -ne $known){
+      $t=Get-LastAgRelayTime $script:St
+      if(-not $t -or $nw.Time -gt $t.AddSeconds(3)){ Set-ActiveProject $nw.Project "отчёт $($nw.Name) ($($nw.Time.ToString('HH:mm:ss'))) новее последней вставки в Antigravity" }
+    }
+    [string]$script:St.activeProject
+  } finally { $script:InActiveProject=$false }
+}
+function Set-ActiveProject([string]$P,[string]$Why){
+  if(-not $P -or -not $script:St -or [string]$script:St.activeProject -eq $P){ return }
+  $old=[string]$script:St.activeProject; $script:St.activeProject=$P; Save-State
+  Log "📁 Проект: $(if($old){"$old → "})$P ($Why). Отчёты других проектов не трогаю."
+}
+# Заголовок блока Gemini -> активный проект и номер шага. Без заголовка — пишу в лог «формат промпта нарушен» (один раз на блок).
+function Note-BlockHeader([string]$Code){
+  $h=Get-PromptHeader $Code
+  if($h){ Set-ActiveProject $h.project "заголовок блока Gemini [$($h.project)] [S$($h.step)]" }
+  elseif($Code){ $k=Get-Hash8 $Code; if($script:FormatWarned -ne $k){ $script:FormatWarned=$k; Log "⚠ формат промпта нарушен: в блоке Gemini нет заголовка «[…] [Проект] [S<N>] […]» (первая строка «$(Get-FirstLine $Code)») — очередь по чередованию содержимого" } }
+  $h
+}
+function Get-FileHash8([string]$Path){ try{ Get-Hash8 ([IO.File]::ReadAllText($Path,[Text.Encoding]::UTF8)) }catch{ '' } }
+# Решение по состоянию (без чтения окон): заголовок — последний переданный блок (St.lastBlock).
+function Get-TurnDecisionNow([string]$BlockCode=''){
+  $ap=Get-ActiveProjectNow
+  $hdr=$null; $bh=''
+  if($BlockCode){ $hdr=Get-PromptHeader $BlockCode; $bh=Get-Hash8 $BlockCode }
+  elseif($script:St.lastBlock -and [string]$script:St.lastBlock.project -eq $ap){ $hdr=@{ project=[string]$script:St.lastBlock.project; step=[int]$script:St.lastBlock.step } }
+  $rep=@(Get-ReportCandidates -Files @(Get-Files) -Project $(if($hdr){$hdr.project}else{$ap}) -Pattern $Cfg.Pattern -MaxAgeHours ([double]$Cfg.MaxReportAgeHours)) | Select-Object -Last 1
+  $rh= if($rep){ Get-FileHash8 $rep.FullName } else { '' }
+  $t=Get-LastAgRelayTime $script:St; if(-not $t){ $t=[datetime]::MinValue }
+  Get-TurnDecision -Header $hdr -BlockHash $bh -Report $rep -ReportHash $rh -State $script:St -LastAgAt $t
+}
+function Note-Contradiction($d){
+  if(-not $d -or -not $d.contradiction){ return }
+  if($script:ContraSaid -eq $d.contradiction){ return }; $script:ContraSaid=$d.contradiction
+  $msg="⚖ Очередь: противоречие — $($d.contradiction). Безопасный вариант: ничего не отправляю повторно, жду новое."; Log $msg; try{ Tg-Send $msg | Out-Null }catch{}
+}
+# Запомнить переданный в Antigravity блок (проект, шаг, хэш).
+function Register-BlockRelayed([string]$Code,[string]$Hash){
+  $h=Get-PromptHeader $Code; $ap=Get-ActiveProjectNow
+  $pr= if($h){ $h.project } else { $ap }; $stp= if($h){ [int]$h.step } else { -1 }
+  Add-SentRecord $script:St 'ag' $pr $stp $Hash
+  $script:St.lastBlock=[ordered]@{ project=$pr; step=$stp; hash=$Hash; at=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss') }
+  $script:St.lastAgAt=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
 }
 function Reset-RewrittenReports{
   foreach($f in @(Get-Files)){
@@ -56,10 +115,26 @@ function Reset-RewrittenReports{
   }
 }
 function Get-LastAgRelayTimeRu{ $t=Get-LastAgRelayTime $script:St; if($t){ $t.ToString('HH:mm:ss') } else { 'не было' } }
-function Next-File{ Reset-RewrittenReports; @(Get-Files | Where-Object { -not (Is-Done $_.Name) -and -not $script:Held.ContainsKey($_.Name) }) | Select-Object -First 1 }
+function Next-File{
+  Reset-RewrittenReports
+  $files=@(Get-Files); if(-not $files.Count){ return $null }
+  # уже начатые (отправлен/ответ получен/ждёт решения) — доводим до конца
+  if(-not $Cfg.StartupNewestOnly){ return (@($files | Where-Object { -not (Is-Done $_.Name) -and -not $script:Held.ContainsKey($_.Name) }) | Select-Object -First 1) }   # прежнее поведение
+  $busy=@($files | Where-Object { (Get-Stage $_.Name) -in @('sent','answered','stale','resend') -and -not $script:Held.ContainsKey($_.Name) }) | Select-Object -First 1
+  if($busy){ return $busy }
+  # пункт 43: только самый свежий по времени файла (max LastWriteTime/CreationTime) отчёт активного проекта; старые не трогаю и не помечаю
+  $nw=@($files | Sort-Object Time,Key) | Select-Object -Last 1
+  if(-not $nw -or (Is-Done $nw.Name) -or $script:Held.ContainsKey($nw.Name)){ return $null }
+  $lb=$script:St.lastBlock
+  if($lb -and [int]$lb.step -ge 0 -and [string]$lb.project -eq (ProjOf $nw.Name)){
+    $M=[int][regex]::Match($nw.Name,$Cfg.Pattern).Groups['n'].Value
+    if($M -lt [int]$lb.step){ $k="$($nw.Name)<$($lb.step)"; if($script:StepGateSaid -ne $k){ $script:StepGateSaid=$k; Log "⚖ Очередь: $($nw.Name) (№$M) меньше шага S$($lb.step), который уже у Antigravity — ход Antigravity, отчёт не отправляю, жду №$($lb.step)" }; return $null }
+  }
+  $nw
+}
 # ---------- Пункт 24: запуск без «хвоста» ----------
 # Самый новый файл: по времени изменения, при равенстве — по номеру NNN (ключ сортировки).
-function Get-NewestFile($Files){ @($Files | Sort-Object LastWriteTime,Key) | Select-Object -Last 1 }
+function Get-NewestFile($Files){ @($Files | Sort-Object @{e={ if($_.PSObject.Properties['Time'] -and $_.Time){ $_.Time } else { $_.LastWriteTime } }},Key) | Select-Object -Last 1 }
 # Файл старее уже обработанного/отправленного (по времени изменения) — такой автоматически не отправляем. -> имя более нового или $null
 function Get-NewerHandled($f){
   @(Get-Files | Where-Object { $_.Name -ne $f.Name -and $_.LastWriteTime -gt $f.LastWriteTime -and (Get-Stage $_.Name) -notin @('','resend') } | Sort-Object LastWriteTime) | Select-Object -Last 1 | ForEach-Object { $_.Name }
@@ -223,6 +298,7 @@ function Ag-HasText([string]$Text){
 # ---------- Передача ----------
 function Relay-ToAg([string]$n,[string]$ans,[string]$hh,[string]$m2,[string]$how=''){
   Ag-Send -Text $ans -Label "ответ на $n" -Name $n
+  Register-BlockRelayed $ans $hh
   Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'relayed' $hh -Force:((Get-Stage $n) -in @('','done','relayed'))
   Remove-AnswerCache $n
   [void](Play-Sound 'info')
@@ -265,7 +341,7 @@ function Finish-Answered([string]$n){
     Save-AnswerCache $n $ans
   }
   $h2=Get-Hash8 $ans
-  if((Test-RelayHash $script:St $h2) -or (Ag-HasText $ans)){ $msg="ℹ️ Ответ на $n уже есть в Antigravity — повторно не вставляю"; if($script:AgBlock){ $msg="✅ Antigravity снова отвечает.`n$msg"; $script:AgBlock=$null }; Log $msg; Tg-Send $msg | Out-Null; Add-RelayHash $script:St $h2 $Cfg.HashKeep; Set-Stage $n 'relayed' $h2; Remove-AnswerCache $n; Mark-Done $n; return }
+  if((Test-RelayHash $script:St $h2) -or (Ag-HasText $ans)){ $msg="ℹ️ Ответ на $n уже есть в Antigravity — повторно не вставляю"; if($script:AgBlock){ $msg="✅ Antigravity снова отвечает.`n$msg"; $script:AgBlock=$null }; Log $msg; Tg-Send $msg | Out-Null; Register-BlockRelayed $ans $h2; Add-RelayHash $script:St $h2 $Cfg.HashKeep; Set-Stage $n 'relayed' $h2; Remove-AnswerCache $n; Mark-Done $n; return }
   Relay-ToAg $n $ans $h2 $m2
 }
 function Process-File($next){
@@ -296,6 +372,10 @@ function Process-File($next){
       $msg="⏭ [$(ProjOf $n)] $n уже есть в чате Gemini, но после него были другие запросы — повторно НЕ отправляю и ответ автоматически не беру («передай ответ» — вручную, «отправь заново» — отправить)"; Log $msg; Tg-Send $msg | Out-Null; return
     }
   }
+  if($st -eq '' -and $next.FullName){
+    $fh=Get-FileHash8 $next.FullName; $pM=[int][regex]::Match($n,$Cfg.Pattern).Groups['n'].Value
+    if($fh -and (Test-SentRecord $script:St 'gem' '' -1 $fh)){ Set-Stage $n 'sent' -Force; $st='sent'; $script:Adopted[$n]=$true; Log "ℹ️ $($n): это содержимое (хэш $fh) уже отправлялось в Gemini — повторно не отправляю, жду ответ" }
+  }
   if($st -ne 'sent'){
     $script:State="обрабатываю $n"
     Log "Новый файл: $n (проект: $(ProjOf $n))$(if($st -eq 'resend'){' (повторная отправка)'})"
@@ -305,6 +385,7 @@ function Process-File($next){
     catch{ if((Get-ErrorKind $_) -eq 'notsent'){ $em="❌ [$(ProjOf $n)] $n НЕ отправлен в Gemini: не удалось прикрепить файл ($($_.Exception.Message)). Текст в поле не вставляю; повторю позже."; Log $em; Tg-Send $em | Out-Null }; throw }
     $pBefore=[int]$ctx.pBefore
     Set-Stage $n 'sent'
+    try{ Add-SentRecord $script:St 'gem' (ProjOf $n) $pM (Get-FileHash8 $next.FullName); Save-State }catch{}
     Tg-Send "📤 [$(ProjOf $n)] Файл $n отправлен в Gemini (модель: $m)" | Out-Null
   } else { Log "Повтор: $n уже отправлен в Gemini (этап «отправлен»), повторно не отправляю — забираю ответ" }
   $script:State="жду ответ Gemini на $n"
@@ -344,7 +425,7 @@ function Process-File($next){
   }
   if($script:Adopted.ContainsKey($n)){   # пункт 24: файл подхвачен при запуске — ответ мог быть уже вставлен вручную
     $script:Adopted.Remove($n)
-    if(Ag-HasText $ans){ Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'answered' $hh; Set-Stage $n 'relayed' $hh; Mark-Done $n; $msg="ℹ️ Ответ на $n уже есть в Antigravity (вставлен вручную) — повторно не вставляю"; Log $msg; Tg-Send $msg | Out-Null; return }
+    if(Ag-HasText $ans){ Register-BlockRelayed $ans $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'answered' $hh; Set-Stage $n 'relayed' $hh; Mark-Done $n; $msg="ℹ️ Ответ на $n уже есть в Antigravity (вставлен вручную) — повторно не вставляю"; Log $msg; Tg-Send $msg | Out-Null; return }
   }
   Set-Stage $n 'answered' $hh
   Save-AnswerCache $n $ans
@@ -603,7 +684,7 @@ function Run-ActionCore($c){
       if(-not (Is-Argon $m2)){ Enter-LimitStop $m2 "Ответ на сообщение пришёл от модели «$m2» и НЕ передан."; return }
       Check-OurPrompt ([int]$ctx.pBefore)
       $code=Gem-CopyCode
-      if($code){ $hh=Check-Fresh $code; Ag-Send -Text $code -Label 'ответ на сообщение из Telegram'; $script:TurnSide='antigravity'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Ответ на сообщение дала модель $m2; блок Markdown ($($code.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $code)») передан в Antigravity"; Log $msg; Tg-Send $msg | Out-Null }
+      if($code){ $hh=Check-Fresh $code; Ag-Send -Text $code -Label 'ответ на сообщение из Telegram'; $script:TurnSide='antigravity'; Register-BlockRelayed $code $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Ответ на сообщение дала модель $m2; блок Markdown ($($code.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $code)») передан в Antigravity"; Log $msg; Tg-Send $msg | Out-Null }
       else { $a=Gem-CopyWhole; Tg-Send "Ответ Gemini (модель $m2; блока Markdown нет, в Antigravity не передавал):`n`n$a" | Out-Null }
     }
     'ag' { Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag; Ag-Send -Text $c.arg -Label 'текст из Telegram'; Log 'Текст отправлен в Antigravity'; Tg-Send 'Отправил в Antigravity.' | Out-Null }
@@ -614,7 +695,7 @@ function Run-ActionCore($c){
       if($c.whole){ $a=Gem-CopyWhole } else { $a=Gem-CopyCode; if(!$a){ Tg-Send 'В последнем ответе Gemini нет блока Markdown. Напиши «передай весь ответ», если нужно передать его целиком.' | Out-Null; return } }
       if(!$a){ throw 'не нашёл ответ Gemini' }
       $hh=Check-Fresh $a
-      Ag-Send -Text $a -Label 'ответ Gemini (по команде)'; $script:TurnSide='antigravity'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State
+      Ag-Send -Text $a -Label 'ответ Gemini (по команде)'; $script:TurnSide='antigravity'; Register-BlockRelayed $a $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State
       $msg="✅ По команде передал в Antigravity $(if($c.whole){'весь ответ'}else{'блок Markdown'}) (модель $m, $($a.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null
     }
     'force' {
@@ -624,7 +705,7 @@ function Run-ActionCore($c){
       $a=Gem-CopyCode; if(!$a){ Tg-Send 'В последнем ответе Gemini нет блока Markdown — передавать нечего.' | Out-Null; return }
       $hh=Get-Hash8 $a; $sf=Get-StaleFile
       if($sf){ Relay-ToAg $sf.Name $a $hh $m ' (принудительно, по команде «передай всё равно»)'; $script:StaleNotified.Remove($sf.Name) }
-      else { Ag-Send -Text $a -Label 'ответ Gemini (принудительно)'; $script:TurnSide='antigravity'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Принудительно передал в Antigravity блок Markdown (хэш $hh, «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null }
+      else { Ag-Send -Text $a -Label 'ответ Gemini (принудительно)'; $script:TurnSide='antigravity'; Register-BlockRelayed $a $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Принудительно передал в Antigravity блок Markdown (хэш $hh, «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null }
     }
     'resendstale' {
       $sf=Get-StaleFile
@@ -827,7 +908,7 @@ function Write-Status([switch]$Force){
       gwebCurReset= if($q -and $q.gweb){ [string]$q.gweb.curReset } else { '' }; gwebWkReset= if($q -and $q.gweb){ [string]$q.gweb.wkReset } else { '' }
       agH5= if($q -and $q.ag -and $q.ag.h5){ $q.ag.h5.rem } else { $null }; agH5Reset= if($q -and $q.ag -and $q.ag.h5){ [string]$q.ag.h5.reset } else { '' }
       agWk= if($q -and $q.ag -and $q.ag.wk){ $q.ag.wk.rem } else { $null }; agWkReset= if($q -and $q.ag -and $q.ag.wk){ [string]$q.ag.wk.reset } else { '' }
-      turn=[string](Get-RelayTurn -Kind $kind -Stages @($script:St.files.Keys | ForEach-Object { Get-Stage $_ }) -NextFile ([string]$nf) -LastSide ([string]$script:TurnSide) -AgWatch ([bool]$script:AgWatch))
+      turn=[string](Get-RelayTurn -Kind $kind -Stages @($script:St.files.Keys | ForEach-Object { Get-Stage $_ }) -NextFile ([string]$nf) -LastSide ([string]$script:TurnSide) -AgWatch ([bool]$script:AgWatch) -Decision $(try{ [string](Get-TurnDecisionNow).turn }catch{ '' }))
     }
     Write-AtomicText -Path $Cfg.StatusFile -Text ($o | ConvertTo-Json -Depth 5) -NoBackup
   }catch{}
@@ -1271,6 +1352,12 @@ function Invoke-MirrorGemini([switch]$Force){
   if(-not $pk -or -not $pk.answered -or -not $pk.md){ $script:MirrorSeen=$null; return $false }
   $peekKey= if($pk.code){ Get-Hash8 $pk.code } else { 'md:' + (@($pk.labels) -join ',') }
   if($pk.code -and (Test-RelayHash $script:St $peekKey)){ $script:MirrorSeen=$null; return $false }
+  if($pk.code){
+    # пункт 43: очередь по номеру шага — блок передаю, только если сейчас ход Antigravity (S<N> новее отчёта и ещё не передавался)
+    [void](Note-BlockHeader $pk.code); $d=Get-TurnDecisionNow $pk.code; $script:TurnDecision=$d.turn
+    if($d.action -ne 'relay-block'){ Note-Contradiction $d; $script:MirrorSeen=$null
+      $k="$peekKey|$($d.action)"; if($script:MirrorDecSaid -ne $k){ $script:MirrorDecSaid=$k; Log "🔭 Наблюдатель: блок в Gemini не передаю — $($d.reason)" }; return $false }
+  }
   # два одинаковых чтения подряд — ответ дописан и стабилен
   if($script:MirrorSeen -ne $peekKey){ $script:MirrorSeen=$peekKey; return $false }
   $m2=Get-ModelNow; if(-not (Is-Argon $m2)){ return $false }
@@ -1279,11 +1366,13 @@ function Invoke-MirrorGemini([switch]$Force){
   if(Test-RelayHash $script:St $hh){ $script:MirrorSeen=$null; return $false }
   $n=Get-MirrorTarget
   if(Ag-HasText $ans){
+    Register-BlockRelayed $ans $hh
     Add-RelayHash $script:St $hh $Cfg.HashKeep; if($n){ [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: уже был в Antigravity' -Force) }; Save-State
     Log "🔭 Наблюдатель: блок Markdown (хэш $hh) уже есть в Antigravity — отметил как переданный"; $script:MirrorSeen=$null; return $false
   }
   [void](Assert-AgReady)
   Ag-Send -Text $ans -Label 'ответ Gemini (наблюдатель)' -Name $n
+  Register-BlockRelayed $ans $hh
   Add-RelayHash $script:St $hh $Cfg.HashKeep; $script:TurnSide='antigravity'
   if($n){ $script:Held.Remove($n); [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: ответ Gemini передан' -Force); Mark-Done $n }
   Save-State; $script:MirrorSeen=$null; [void](Play-Sound 'info')

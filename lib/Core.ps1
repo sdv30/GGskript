@@ -153,6 +153,7 @@ function Get-DefaultSettings{
     # ---- пункт 24: запуск без «хвоста» ----
     StartupNewestOnly  = $true      # при запуске (и после паузы ≥ StartupTriagePauseMin) брать только самый новый файл; старые необработанные — этап skipped
     StartupAskNewest   = $true      # самый новый не виден в чате Gemini — спросить в Telegram (Отправить / Не отправлять); $false — отправить сам
+    MaxReportAgeHours  = 12         # пункт 43: отчёты старше N часов (по max(LastWriteTime,CreationTime)) автоматически не берутся; 0 — без ограничения
     MirrorRelay        = $true      # постоянный наблюдатель: новый (не передававшийся) блок Markdown в последнем ответе Gemini -> в Antigravity, кто бы ни отправил запрос
     MirrorEverySec     = 15
     AutoDecide         = $true      # автоматический поток решает сам по правилу времени: никаких вопросов в Telegram/панели (только уведомления)

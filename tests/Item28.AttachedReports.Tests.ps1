@@ -93,7 +93,7 @@ Describe 'Пункт 28: протокол запуска — 002 пропуще�
     . (Join-Path $PSScriptRoot '_Load.ps1')
     $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
     function N([int]$i){ 'MyProject_2026-10-18_{0:D3}.md' -f $i }
-    function New-Rep([int]$i,[datetime]$t){ $p=Join-Path $Cfg.Downloads (N $i); [IO.File]::WriteAllText($p,"отчёт $i"); (Get-Item $p).LastWriteTime=$t; $p }
+    function New-Rep([int]$i,[datetime]$t){ $p=Join-Path $Cfg.Downloads (N $i); [IO.File]::WriteAllText($p,"отчёт $i"); $gi=Get-Item $p; $gi.CreationTime=$t; $gi.LastWriteTime=$t; $p }
     function Sent([string]$Like='*'){ ,@($script:TgCalls | Where-Object { $_.m -eq 'sendMessage' -and $_.b.text -like $Like }) }
     function Press($p,[string]$choice){ Handle-Callback "p:$($p.id):$choice" 'cb' $p.msgId }
     function PromptOf([string]$k){ @($script:TgPrompts.Values | Where-Object kind -eq $k) | Select-Object -Last 1 }

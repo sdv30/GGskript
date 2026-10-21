@@ -2,7 +2,7 @@
   . (Join-Path $PSScriptRoot '_Load.ps1')
   $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
   function N([int]$i){ 'MyProject_2026-10-18_{0:D3}.md' -f $i }
-  function New-Rep([int]$i,[datetime]$t){ $p=Join-Path $Cfg.Downloads (N $i); [IO.File]::WriteAllText($p,"отчёт $i"); (Get-Item $p).LastWriteTime=$t; $p }
+  function New-Rep([int]$i,[datetime]$t){ $p=Join-Path $Cfg.Downloads (N $i); [IO.File]::WriteAllText($p,"отчёт $i"); $gi=Get-Item $p; $gi.CreationTime=$t; $gi.LastWriteTime=$t; $p }
   function Sent([string]$Like='*'){ ,@($script:TgCalls | Where-Object { $_.m -eq 'sendMessage' -and $_.b.text -like $Like }) }
   function LastPrompt{ @($script:TgPrompts.Values)[-1] }
   function Press($p,[string]$choice){ Handle-Callback "p:$($p.id):$choice" 'cb' $p.msgId }
@@ -120,7 +120,7 @@ Describe 'Пункт 24: запуск без «хвоста» — только �
 
   Context 'самый новый — по времени файла, при равенстве — по номеру' {
     It 'время важнее номера: 005 изменён позже всех — он самый новый, 006 и 007 пропущены' {
-      (Get-Item (Join-Path $Cfg.Downloads (N 5))).LastWriteTime=[datetime]'2026-10-18 23:00'
+      (Get-Item (Join-Path $Cfg.Downloads (N 5))).LastWriteTime=[datetime]'2026-10-18 23:00'   # пункт 43: CreationTime у файла остаётся прежним — время отчёта = max(изменён, создан)
       $script:LP=(N 5); Start-Procedure | Out-Null
       Get-Stage (N 5) | Should -Be 'sent'; Get-Stage (N 6) | Should -Be 'skipped'; Get-Stage (N 7) | Should -Be 'skipped'
     }
@@ -134,8 +134,9 @@ Describe 'Пункт 24: запуск без «хвоста» — только �
     It 'появился файл с временем раньше переданного — skipped, Gemini не трогается' {
       $script:LP=(N 7); Start-Procedure | Out-Null; Process-File (Next-File)
       [void](New-Rep 9 ([datetime]'2026-10-18 10:00'))   # номер больше, но файл старее 007
-      $f=Next-File; $f.Name | Should -Be (N 9); $script:GemSent.Clear(); Process-File $f
-      $script:GemSent.Count | Should -Be 0; Get-Stage (N 9) | Should -Be 'skipped'; (Sent '*старее уже обработанного*').Count | Should -Be 1
+      # пункт 43: самый свежий по времени файла — 007 (обработан), поэтому 009 вообще не кандидат: Next-File пуст, Gemini не трогается
+      $script:GemSent.Clear(); Next-File | Should -BeNullOrEmpty
+      $script:GemSent.Count | Should -Be 0; Get-Stage (N 9) | Should -Be ''
     }
     It '«отправь заново» (resend) — явная команда, охрана не мешает' {
       [void](Set-FileStage -State $script:St -Name (N 7) -Stage 'relayed' -Force); [void](Set-FileStage -State $script:St -Name (N 3) -Stage 'resend' -Force)

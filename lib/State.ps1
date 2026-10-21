@@ -52,7 +52,7 @@ function Get-StageRu([string]$Stage){
 }
 function Test-StageTransition([string]$From,[string]$To){ if($null -eq $From){ $From='' }; ($script:StageTransitions.ContainsKey($From) -and (@($script:StageTransitions[$From]) -contains $To)) }
 
-function New-RelayState{ [ordered]@{ version=2; files=[ordered]@{}; hashes=@(); lastAgAt='' } }
+function New-RelayState{ [ordered]@{ version=2; files=[ordered]@{}; hashes=@(); lastAgAt=''; activeProject=''; lastBlock=$null; lastSide=''; sent=@() } }
 function Get-FileStage($State,[string]$Name){ if($State.files.Contains($Name)){ [string]$State.files[$Name].stage } else { '' } }
 function Set-FileStage{
   param([Parameter(Mandatory)]$State,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][string]$Stage,[string]$Hash,[string]$Note,[switch]$Force)
@@ -81,6 +81,10 @@ function Read-RelayState([string]$Path){
   if($r.Data.files){ foreach($k in $r.Data.files.Keys){ $v=$r.Data.files[$k]; $s.files[$k]=[ordered]@{ stage=[string]$v.stage; time=[string]$v.time; hash=[string]$v.hash; attempts=[int]$v.attempts; note=[string]$v.note } } }
   if($r.Data.hashes){ $s.hashes=@($r.Data.hashes | ForEach-Object { [string]$_ }) }
   if($r.Data.lastAgAt){ $s.lastAgAt=[string]$r.Data.lastAgAt }
+  if($r.Data.activeProject){ $s.activeProject=[string]$r.Data.activeProject }
+  if($r.Data.lastSide){ $s.lastSide=[string]$r.Data.lastSide }
+  if($r.Data.lastBlock){ $b=$r.Data.lastBlock; $s.lastBlock=[ordered]@{ project=[string]$b.project; step=[int]$b.step; hash=[string]$b.hash; at=[string]$b.at } }
+  if($r.Data.sent){ $s.sent=@($r.Data.sent | ForEach-Object { [string]$_ }) }
   [pscustomobject]@{ State=$s; Source=$r.Source; Error=$r.Error }
 }
 # Чистка: удаляет только завершённые записи о файлах, которых уже НЕТ в папке, оставляя последние $Keep завершённых.
@@ -143,13 +147,98 @@ function Get-TurnSideOfStage([string]$Stage,[string]$Prev){
   switch($Stage){ {$_ -in 'sent','resend','stale'}{ 'gemini' } {$_ -in 'answered','relayed'}{ 'antigravity' } default{ $Prev } }
 }
 # Чей ход сейчас: stopped | limit | gemini | antigravity | idle. Чистая функция (тесты Item41).
-function Get-RelayTurn([string]$Kind,[string[]]$Stages=@(),[string]$NextFile='',[string]$LastSide='',[bool]$AgWatch=$false){
+function Get-RelayTurn([string]$Kind,[string[]]$Stages=@(),[string]$NextFile='',[string]$LastSide='',[bool]$AgWatch=$false,[string]$Decision=''){
   if($Kind -in 'paused','stopped'){ return 'stopped' }
   if($Kind -eq 'limit'){ return 'limit' }
+  if($Decision -in 'gemini','antigravity'){ return $Decision }   # пункт 43: решение по номеру шага и проекту
   if(@($Stages | Where-Object { $_ -in 'sent','resend','stale' }).Count){ return 'gemini' }      # отчёт в Gemini, ждём ответ
   if(@($Stages | Where-Object { $_ -eq 'answered' }).Count){ return 'antigravity' }             # ответ получен, идёт в Antigravity
   if($NextFile){ return 'gemini' }                                                              # новый отчёт ждёт отправки в Gemini
   if($AgWatch){ return 'antigravity' }                                                          # «Antigravity: текст» — ждём отчёт
   if($LastSide -in 'gemini','antigravity'){ return $LastSide }
   'idle'
+}
+
+
+# ---------- Пункт 43: очередь по номеру шага и проекту (чистые функции) ----------
+# Время отчёта: самое позднее из LastWriteTime и CreationTime (копия файла может получить новое CreationTime при старом LastWriteTime).
+function Get-ReportFileTime($f){
+  $w=$f.LastWriteTime; $c=$null; try{ $c=$f.CreationTime }catch{}
+  if($c -and $c -is [datetime] -and $c -gt $w){ $c } else { $w }
+}
+# Заголовок блока Gemini: «[ARGON>FLASH] [Arena] [S006] [2026-10-20]» (в первых строках; &gt; допускается). -> @{ project; step } или $null.
+function Get-PromptHeader([string]$Text){
+  $t=([string]$Text) -replace '&gt;','>' -replace '&lt;','<' -replace '&amp;','&'
+  $head=(@($t -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 3) -join ' ')
+  $m=[regex]::Match($head,'\[(?<project>[^\[\]>]+)\]\s*\[\s*(?:REWORK\s*)?S(?<n>\d{1,4})\s*\]')
+  if(-not $m.Success){ return $null }
+  $pr=$m.Groups['project'].Value.Trim(); if(-not $pr -or $pr -match '\s{2,}'){ return $null }
+  @{ project=$pr; step=[int]$m.Groups['n'].Value }
+}
+# Кандидаты-отчёты: только проект $Project (если задан), не старше MaxAgeHours (если > 0); сортировка по времени файла, затем по номеру.
+function Get-ReportCandidates{
+  param($Files,[string]$Project,[string]$Pattern,[datetime]$Now=(Get-Date),[double]$MaxAgeHours=0)
+  @(@($Files) | Where-Object { $_ } | ForEach-Object {
+      $m=[regex]::Match([string]$_.Name,$Pattern); if(-not $m.Success){ return }
+      $pr=$m.Groups['project'].Value; if($Project -and $pr -ne $Project){ return }
+      $t= if($_.PSObject.Properties['Time'] -and $_.Time){ $_.Time } else { Get-ReportFileTime $_ }
+      if($MaxAgeHours -gt 0 -and $t -lt $Now.AddHours(-$MaxAgeHours)){ return }
+      [pscustomobject]@{ Name=[string]$_.Name; FullName=[string]$_.FullName; Time=$t; Num=[int]$m.Groups['n'].Value; Project=$pr }
+    } | Sort-Object Time,Num)
+}
+# Активный проект: из заголовка последнего блока Gemini; иначе — проект самого свежего отчёта (по времени файла).
+function Get-ActiveProject{
+  param($Header,$Files,[string]$Pattern,[datetime]$Now=(Get-Date),[double]$MaxAgeHours=0,[string]$Known='')
+  if($Header -and $Header.project){ return [string]$Header.project }
+  $nw=@(Get-ReportCandidates -Files $Files -Pattern $Pattern -Now $Now -MaxAgeHours $MaxAgeHours) | Select-Object -Last 1
+  if($nw){ return $nw.Project }; $Known
+}
+# Учёт отправленного: «kind|project|step|hash» (kind: ag — блок в Antigravity, gem — отчёт в Gemini).
+function Add-SentRecord($State,[string]$Kind,[string]$Project,[int]$Step,[string]$Hash,[int]$Keep=300){
+  $r="$Kind|$Project|$Step|$Hash"; $l=@(@($State.sent) | Where-Object { $_ -and $_ -ne $r }) + $r
+  if($l.Count -gt $Keep){ $l=$l[($l.Count-$Keep)..($l.Count-1)] }; $State.sent=$l; $State.lastSide=$Kind
+}
+# Есть ли запись: по хэшу (если задан) или по проекту+шагу.
+function Test-SentRecord($State,[string]$Kind,[string]$Project,[int]$Step=-1,[string]$Hash=''){
+  foreach($r in @($State.sent)){ $p=([string]$r) -split '\|',4; if($p.Count -lt 4 -or $p[0] -ne $Kind){ continue }
+    if($Hash -and $p[3] -eq $Hash){ return $true }
+    if($Step -ge 0 -and $Project -and $p[1] -eq $Project -and [int]$p[2] -eq $Step){ return $true } }
+  $false
+}
+# Решение «чей ход». $Header — заголовок последнего блока Gemini (или $null); $BlockHash — его хэш; $Report — самый свежий кандидат
+# (Get-ReportCandidates | Select -Last 1); $ReportHash — хэш его содержимого. -> @{ turn; action; project; step; num; report; reason; formatBroken; contradiction }
+# action: relay-block | send-report | wait-report | wait-answer | wait
+function Get-TurnDecision{
+  param($Header,[string]$BlockHash='',$Report,[string]$ReportHash='',$State,[datetime]$LastAgAt=[datetime]::MinValue)
+  $o=@{ turn='idle'; action='wait'; project=''; step=-1; num=-1; report=''; reason=''; formatBroken=$false; contradiction='' }
+  if($Report){ $o.report=$Report.Name; $o.num=[int]$Report.Num; $o.project=$Report.Project }
+  $blockSent= $BlockHash -and ((Test-SentRecord $State 'ag' '' -1 $BlockHash) -or (Test-RelayHash $State $BlockHash))
+  $repSent= $Report -and ((($ReportHash) -and (Test-SentRecord $State 'gem' '' -1 $ReportHash)) -or (Test-SentRecord $State 'gem' $Report.Project $Report.Num))
+  $repNew= $Report -and ($LastAgAt -eq [datetime]::MinValue -or $Report.Time -gt $LastAgAt.AddSeconds(3))
+  if($Header){
+    $o.project=$Header.project; $o.step=[int]$Header.step; $N=$o.step
+    if($Report -and $Report.Project -ne $Header.project){ $Report=$null; $o.report=''; $o.num=-1; $repSent=$false; $repNew=$false }
+    $M= if($Report){ $o.num } else { -1 }
+    if($N -gt $M){
+      $o.turn='antigravity'
+      if($BlockHash -and -not $blockSent -and -not (Test-SentRecord $State 'ag' $o.project $N)){ $o.action='relay-block'; $o.reason="блок S$N новее отчёта $(if($M -ge 0){"№$M"}else{'(отчётов нет)'}) — передать в Antigravity" }
+      elseif($BlockHash -and -not $blockSent){ $o.action='wait-report'; $o.contradiction="блок S$N с другим содержимым, а S$N уже передавался — повторно не передаю"; $o.reason="жду $($o.project)_…_$('{0:D3}' -f $N).md" }
+      else { $o.action='wait-report'; $o.reason="S$N у Antigravity — жду $($o.project)_…_$('{0:D3}' -f $N).md" }
+      return $o
+    }
+    # M >= N: отчёт на текущий шаг (или новее) есть
+    if($repSent){ $o.turn='gemini'; $o.action='wait-answer'; $o.reason="отчёт №$M уже в Gemini — жду блок S$($M+1)"; return $o }
+    if($repNew){ $o.turn='gemini'; $o.action='send-report'; $o.reason="отчёт №$M ≥ S$N и новее последней вставки — прикрепить в Gemini"; return $o }
+    $o.turn='gemini'; $o.action='wait'; $o.contradiction="отчёт $($Report.Name) (№$M ≥ S$N) старее последней вставки в Antigravity — не отправляю, жду новый"; $o.reason=$o.contradiction; return $o
+  }
+  # заголовка нет — чередование по содержимому
+  $o.formatBroken= [bool]$BlockHash
+  $last=[string]$State.lastSide
+  $canRelay= $BlockHash -and -not $blockSent
+  $canSend= $Report -and -not $repSent -and $repNew
+  if($last -eq 'ag'){ if($canSend){ $o.turn='gemini'; $o.action='send-report'; $o.reason='без номера: последним ушёл блок в Antigravity, есть новый отчёт' } else { $o.turn='antigravity'; $o.action='wait-report'; $o.reason='без номера: последним ушёл блок в Antigravity — жду отчёт' } }
+  elseif($last -eq 'gem'){ if($canRelay){ $o.turn='antigravity'; $o.action='relay-block'; $o.reason='без номера: последним ушёл отчёт в Gemini, есть новый блок' } else { $o.turn='gemini'; $o.action='wait-answer'; $o.reason='без номера: последним ушёл отчёт в Gemini — жду блок' } }
+  elseif($canSend){ $o.turn='gemini'; $o.action='send-report'; $o.reason='без номера: новый отчёт' }
+  elseif($canRelay){ $o.turn='antigravity'; $o.action='relay-block'; $o.reason='без номера: новый блок' }
+  $o
 }
