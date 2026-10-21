@@ -103,7 +103,7 @@ Describe 'Пункт 25A: протокол запуска' -Tag Item25,Item25A {
   It 'лимит исчерпан — шаг 2 останавливает протокол: модель не читаю, ничего не отправляю' {
     Mock Check-Quotas { $script:QStopG=$true; $script:Q=@{ time='08:50' }; 'x' }
     Start-Procedure | Should -BeTrue
-    Should -Invoke Get-ModelNow -Times 0; StartText | Should -Match '⛔ исчерпан: лимит Gemini'; StartText | Should -Match '👉 Ход: ничей — жду сброса'
+    Should -Invoke Get-ModelNow -Times 0; StartText | Should -Match '⛔ исчерпан: лимит Gemini'; StartText | Should -Match '👉 Ход: Antigravity, если в Gemini есть непереданный блок; иначе жду сброса'   # пункт 46
     Get-Stage (N 3) | Should -Be '' -Because 'до шага 4 не дошли'
   }
   It 'модель не Argon, AutoSwitchModel — переключаю и продолжаю' {
@@ -114,7 +114,7 @@ Describe 'Пункт 25A: протокол запуска' -Tag Item25,Item25A {
   It 'модель не Argon, AutoSwitchModel=false — остановка по модели, дальше не иду' {
     $Cfg.AutoSwitchModel=$false; $script:Model='Flash'
     Start-Procedure | Should -BeTrue
-    $script:LimitStop | Should -BeTrue; StartText | Should -Match '👉 Ход: ничей — жду нужную модель'; Should -Invoke Gem-PeekAnswer -Times 0
+    $script:LimitStop | Should -BeTrue; StartText | Should -Match '👉 Ход: Antigravity, если .*иначе жду нужную модель'   # пункт 46; Should -Invoke Gem-PeekAnswer -Times 0
   }
   It 'Gemini генерирует — жду (повтор), файлы не трогаю' {
     Mock Gem-IsGenerating { $true }

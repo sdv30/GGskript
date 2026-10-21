@@ -153,7 +153,7 @@ Describe 'Пункт 27B: Antigravity без фокуса' -Tag Item27,Item27B {
   Context 'Accept all' {
     BeforeEach { $script:Paused=$false; $Cfg.GitCheckpointRepo=''; Mock Ag-GetWindow { 7 }; Mock Find-AcceptAll { 'BTN' }; Mock Invoke-WithFocus { & $Body }; Mock Uia-ClickEl { $true } }
     It 'CDP: DOM-клик, окно на передний план не вывожу' {
-      Mock AgCdp-ClickText { $true }; Mock Uia-Invoke { $true }
+      Mock AgCdp-AcceptAll { @{found=$true;ok=$true;busy=$false;files=2} }; Mock Uia-Invoke { $true }
       Try-AcceptAll | Should -BeTrue
       Should -Invoke Invoke-WithFocus -Times 0; Should -Invoke Uia-Invoke -Times 0
     }
