@@ -31,8 +31,8 @@ $mono=New-Object System.Drawing.Font('Consolas',9.5)
 $form=New-Object System.Windows.Forms.Form
 $form.AutoScaleMode=[System.Windows.Forms.AutoScaleMode]::Dpi
 $form.Text='GGskript'; $form.Font=$font
-$form.Size=New-Object System.Drawing.Size(820,640)
-$form.MinimumSize=New-Object System.Drawing.Size(700,520)
+$form.Size=New-Object System.Drawing.Size(820,740)
+$form.MinimumSize=New-Object System.Drawing.Size(700,620)
 $form.StartPosition='CenterScreen'
 try{ if(Test-Path -LiteralPath $IcoF){ $form.Icon=New-Object System.Drawing.Icon($IcoF) } }catch{}
 $form.TopMost=$false
@@ -132,7 +132,71 @@ $txtLog=New-Object System.Windows.Forms.RichTextBox
 $txtLog.Dock='Fill'; $txtLog.ReadOnly=$true; $txtLog.Font=$mono; $txtLog.BackColor=[System.Drawing.Color]::FromArgb(24,24,28); $txtLog.ForeColor=[System.Drawing.Color]::Gainsboro
 $txtLog.WordWrap=$false; $txtLog.ScrollBars='Both'; $txtLog.DetectUrls=$false
 
-$form.Controls.Add($txtLog); $form.Controls.Add($pnlCmd); $form.Controls.Add($pnlBtn); $form.Controls.Add($pnlTop)
+# ---- пункт 41: индикатор «чей ход» (плитки Gemini / Antigravity, анимированная стрелка) ----
+if(-not ('GG.TurnPanel' -as [type])){
+  Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'
+namespace GG { public class TurnPanel : System.Windows.Forms.Panel {
+  public TurnPanel(){ SetStyle(System.Windows.Forms.ControlStyles.AllPaintingInWmPaint|System.Windows.Forms.ControlStyles.OptimizedDoubleBuffer|System.Windows.Forms.ControlStyles.UserPaint|System.Windows.Forms.ControlStyles.ResizeRedraw,true); DoubleBuffered=true; }
+} }
+'@
+}
+$script:turnView=Get-TurnView 'idle' $false; $script:turnPhase=0
+$pnlTurn=New-Object GG.TurnPanel; $pnlTurn.Dock='Top'; $pnlTurn.Height=104; $pnlTurn.BackColor=[System.Drawing.Color]::White
+$tfEmo=New-Object System.Drawing.Font('Segoe UI Emoji',20); $tfName=New-Object System.Drawing.Font('Segoe UI',12,[System.Drawing.FontStyle]::Bold)
+$tfSub=New-Object System.Drawing.Font('Segoe UI',8.5); $tfCap=New-Object System.Drawing.Font('Segoe UI',11,[System.Drawing.FontStyle]::Bold); $tfArr=New-Object System.Drawing.Font('Segoe UI',15,[System.Drawing.FontStyle]::Bold); $tfChev=New-Object System.Drawing.Font('Segoe UI',14,[System.Drawing.FontStyle]::Bold)
+function Get-TilePal([string]$st){
+  $C=[System.Drawing.Color]
+  switch($st){
+    'active'{ @{ Fill=$C::FromArgb(225,245,230); Edge=$C::FromArgb(34,139,34); Text=$C::FromArgb(20,100,30); Sub=$C::FromArgb(34,139,34) } }
+    'limit' { @{ Fill=$C::FromArgb(255,243,220); Edge=$C::FromArgb(230,140,0);  Text=$C::FromArgb(150,85,0);  Sub=$C::FromArgb(200,110,0) } }
+    'off'   { @{ Fill=$C::FromArgb(246,246,248); Edge=$C::FromArgb(215,215,220); Text=$C::FromArgb(150,150,155); Sub=$C::FromArgb(165,165,170) } }
+    default { @{ Fill=$C::FromArgb(240,240,243); Edge=$C::FromArgb(200,200,206); Text=$C::FromArgb(95,95,102);  Sub=$C::FromArgb(130,130,136) } }
+  }
+}
+function New-RoundPath([System.Drawing.RectangleF]$r,[float]$rad){
+  $p=New-Object System.Drawing.Drawing2D.GraphicsPath; $d=$rad*2
+  $p.AddArc($r.X,$r.Y,$d,$d,180,90); $p.AddArc($r.Right-$d,$r.Y,$d,$d,270,90); $p.AddArc($r.Right-$d,$r.Bottom-$d,$d,$d,0,90); $p.AddArc($r.X,$r.Bottom-$d,$d,$d,90,90); $p.CloseFigure(); $p
+}
+$pnlTurn.Add_Paint({ param($s,$e)
+  try{
+    $g=$e.Graphics; $g.SmoothingMode='AntiAlias'; $g.TextRenderingHint='ClearTypeGridFit'; $v=$script:turnView
+    $W=[float]$s.ClientSize.Width; $gap=[Math]::Max(150,[Math]::Min(220,$W*0.26)); $tw=[Math]::Min(250,($W-$gap-24)/2); $top=24; $th=66
+    $xG=($W-$gap)/2-$tw; $xA=($W+$gap)/2
+    $sf=New-Object System.Drawing.StringFormat; $sf.Alignment='Center'; $sf.LineAlignment='Center'
+    $sfL=New-Object System.Drawing.StringFormat; $sfL.LineAlignment='Center'
+    foreach($t in @(@($xG,'✨','Gemini',$v.G),@($xA,'🛠','Antigravity',$v.A))){
+      $pal=Get-TilePal $t[3]; $r=New-Object System.Drawing.RectangleF([float]$t[0],[float]$top,[float]$tw,[float]$th)
+      $path=New-RoundPath $r 12
+      $g.FillPath((New-Object System.Drawing.SolidBrush($pal.Fill)),$path)
+      $g.DrawPath((New-Object System.Drawing.Pen($pal.Edge,$(if($t[3] -in 'active','limit'){2.5}else{1}))),$path); $path.Dispose()
+      $g.DrawString($t[1],$tfEmo,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+10),$r.Y,44,$r.Height)),$sf)
+      $g.DrawString($t[2],$tfName,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+58),($r.Y+8),($tw-62),28)),$sfL)
+      $g.DrawString((Get-TurnTileSub $t[3]),$tfSub,(New-Object System.Drawing.SolidBrush($pal.Sub)),(New-Object System.Drawing.RectangleF(($r.X+59),($r.Y+34),($tw-62),22)),$sfL)
+      if($t[3] -eq 'active'){
+        $bob=[float](4*[Math]::Sin($script:turnPhase*[Math]::PI/4)); $alpha=[int](170+85*[Math]::Abs([Math]::Cos($script:turnPhase*[Math]::PI/8)))
+        $g.DrawString('▼',$tfArr,(New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($alpha,34,139,34))),(New-Object System.Drawing.RectangleF($r.X,(-2+$bob),$tw,24)),$sf)
+      }
+    }
+    $cc=[System.Drawing.Color]::FromName($v.Color); $cr=New-Object System.Drawing.RectangleF((($W-$gap)/2),$top,$gap,($th/2+4))
+    $g.DrawString($v.Caption,$tfCap,(New-Object System.Drawing.SolidBrush($cc)),$cr,$sf)
+    $dir= if($v.G -eq 'active'){ '◀  ◀  ◀' } elseif($v.A -eq 'active'){ '▶  ▶  ▶' } else { '' }
+    if($dir){
+      $k=$script:turnPhase % 3; $parts=$dir -split '  '
+      $x0=($W-$gap)/2; $step=$gap/4
+      for($i=0;$i -lt 3;$i++){ $j= if($v.A -eq 'active'){ $i } else { 2-$i }; $a= if($j -eq $k){255}else{90}
+        $g.DrawString($parts[$i],$tfChev,(New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($a,34,139,34))),(New-Object System.Drawing.RectangleF(($x0+$step*($i+0.5)),($top+$th/2-2),$step,30)),$sf) }
+    }
+    $g.DrawLine((New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(228,228,232))),0,($s.ClientSize.Height-1),$W,($s.ClientSize.Height-1))
+  }catch{}
+})
+$turnTimer=New-Object System.Windows.Forms.Timer; $turnTimer.Interval=200
+$turnTimer.Add_Tick({ $script:turnPhase=($script:turnPhase+1)%48; $pnlTurn.Invalidate() })
+function Set-TurnView($v){
+  $old=$script:turnView; $script:turnView=$v
+  if($v.Anim){ if(-not $turnTimer.Enabled){ $turnTimer.Start() } } else { if($turnTimer.Enabled){ $turnTimer.Stop() } }
+  if(-not $old -or $old.Caption -ne $v.Caption -or $old.G -ne $v.G -or $old.A -ne $v.A){ $pnlTurn.Invalidate() }
+}
+$form.Controls.Add($txtLog); $form.Controls.Add($pnlCmd); $form.Controls.Add($pnlBtn); $form.Controls.Add($pnlTop); $form.Controls.Add($pnlTurn)
 
 # ---- хвост лога ----
 $script:logPos=-1
@@ -151,12 +215,13 @@ function Update-Status{
   if(-not (Worker-Alive)){
     $lblState.Text='Состояние: воркер не запущен'; $lblState.ForeColor=[System.Drawing.Color]::DimGray
     $lblModel.Text='Модель: —'; $lblFile.Text='Нажмите «Старт», чтобы запустить передачу.'; $lblLim.Text='Лимиты: —'; $lblAct.Text=''
-    return
+    Set-TurnView (Get-TurnView 'off' $false); return
   }
   try{
     $j=[IO.File]::ReadAllText($Cfg.StatusFile,[Text.Encoding]::UTF8) | ConvertFrom-Json; $v=Get-GuiStateView $j
     $lblState.Text=$v.State; $lblState.ForeColor=[System.Drawing.Color]::FromName($v.Color)
     $lblModel.Text=$v.Model; $lblFile.Text=$v.File; $lblLim.Text=$v.Limits; $lblAct.Text=$v.Action
+    $tn= if($j.turn){ [string]$j.turn } else { Get-RelayTurn -Kind ([string]$j.kind) }; Set-TurnView (Get-TurnView $tn $true)
     if($null -ne $j.autoAllow -and ((Get-Date)-$script:chkAt).TotalSeconds -gt 5 -and $chkAuto.Checked -ne [bool]$j.autoAllow){ $script:chkSync=$true; $chkAuto.Checked=[bool]$j.autoAllow; $script:chkSync=$false }
   }catch{}
 }
@@ -181,7 +246,7 @@ function Send-PcText([string]$k,[string]$text){ Send-Cmd ("/pc_$k b64:"+[Convert
 function Confirm-Gui([string]$msg){ ([System.Windows.Forms.MessageBox]::Show($form,$msg,'GGskript',[System.Windows.Forms.MessageBoxButtons]::OKCancel,[System.Windows.Forms.MessageBoxIcon]::Question)) -eq 'OK' }
 
 $btnStart.Add_Click({ Remove-Item -LiteralPath $Cfg.PauseFile -EA 0; if(-not (Worker-Alive)){ Start-Worker } else { Send-Cmd 'старт' } })
-$btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}; Send-Cmd 'стоп'; $lblState.Text='Состояние: ⏸ Остановлен — ничего не делаю'; $lblState.ForeColor=[System.Drawing.Color]::DarkOrange })
+$btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}; Send-Cmd 'стоп'; Set-TurnView (Get-TurnView 'stopped'); $lblState.Text='Состояние: ⏸ Остановлен — ничего не делаю'; $lblState.ForeColor=[System.Drawing.Color]::DarkOrange })
 $miExit.Add_Click({
   $r=[System.Windows.Forms.MessageBox]::Show($form,"Выключить GGskript (воркер) совсем? Из Telegram запустить снова будет нельзя — только кнопкой «Старт» здесь или ярлыком.`nЧтобы просто остановиться и слушать Telegram — кнопка «Стоп».",'GGskript',[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Warning)
   if($r -eq 'Yes'){ try{ New-Item -ItemType File $Cfg.StopFile -Force | Out-Null }catch{} }

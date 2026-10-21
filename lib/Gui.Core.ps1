@@ -100,3 +100,18 @@ function Restart-AgCdp([int]$Port=9333,[int]$WaitSec=30,
   & $Starter $exe (Get-AgDebugArgs $Port)
   "🛠 Перезапустил Antigravity с портом $Port. Откройте прошлый разговор: значок часов → последний → Open in current window."
 }
+
+# ---------- Пункт 41: индикатор «чей ход» (Gemini / Antigravity) ----------
+# Как рисовать индикатор: подписи, подсветка плиток, анимация.
+function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true){
+  if(-not $WorkerAlive){ $Turn='off' }
+  switch($Turn){
+    'gemini'      { @{ Caption='Ход Gemini';       G='active'; A='wait'; Anim=$true;  Color='ForestGreen' } }
+    'antigravity' { @{ Caption='Ход Antigravity';  G='wait'; A='active'; Anim=$true;  Color='ForestGreen' } }
+    'stopped'     { @{ Caption='⏸ Остановлен';     G='off';  A='off';    Anim=$false; Color='DimGray' } }
+    'limit'       { @{ Caption='⛔ Лимит Gemini';   G='limit';A='off';    Anim=$false; Color='DarkOrange' } }
+    'off'         { @{ Caption='Скрипт не запущен'; G='off';  A='off';    Anim=$false; Color='DimGray' } }
+    default       { @{ Caption='Ожидание работы';  G='wait'; A='wait';   Anim=$false; Color='DimGray' } }
+  }
+}
+function Get-TurnTileSub([string]$St){ switch($St){ 'active'{'в работе'} 'wait'{'ожидание'} 'limit'{'лимит'} default{'—'} } }

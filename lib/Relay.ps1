@@ -18,6 +18,7 @@ $script:Blk=@{ key=$null; info=$null; since=$null; notified=$false; lastRecheck=
 $script:AutoPlan=$null; $script:AutoPlanKey=''; $script:AutoFails=0; $script:AutoLastAttempt=$null
 $script:TriageNeeded=$true; $script:LastStartReport=''; $script:StopAnnounced=$false; $script:AbortOnStop=$false; $script:PausedSince=$null; $script:Held=@{}; $script:Adopted=@{}; $script:AutoSend=@{}; $script:SendNotBefore=@{}   # пункт 24
 $script:UsageNoTabSaid=$false; $script:ManualModelSaid=$false   # пункт 26
+$script:TurnSide=""   # пункт 41: последняя сторона, которой передали работу (gemini|antigravity)
 $script:AgBlock=$null   # @{ kind; msg; detail; file; since; notifiedAt; lastLog; restartedAt } — Antigravity не принимает ответ
 
 # ---------- Этапы ----------
@@ -28,6 +29,7 @@ function Set-Stage{
   if(Set-FileStage -State $script:St -Name $n -Stage $st -Hash $hash -Force:$Force){
     if(-not $NoSave){ Save-State }; if(-not $Quiet){ Log "Этап: $n → $(Get-StageRu $st)" }
   }
+  $script:TurnSide=Get-TurnSideOfStage $st $script:TurnSide   # пункт 41: чей ход (для индикатора на панели)
 }
 function Is-Done([string]$n){ Test-FileDone $script:St $n }
 function ProjOf([string]$n){ Get-ProjectOf $n $Cfg.Pattern }
@@ -601,7 +603,7 @@ function Run-ActionCore($c){
       if(-not (Is-Argon $m2)){ Enter-LimitStop $m2 "Ответ на сообщение пришёл от модели «$m2» и НЕ передан."; return }
       Check-OurPrompt ([int]$ctx.pBefore)
       $code=Gem-CopyCode
-      if($code){ $hh=Check-Fresh $code; Ag-Send -Text $code -Label 'ответ на сообщение из Telegram'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Ответ на сообщение дала модель $m2; блок Markdown ($($code.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $code)») передан в Antigravity"; Log $msg; Tg-Send $msg | Out-Null }
+      if($code){ $hh=Check-Fresh $code; Ag-Send -Text $code -Label 'ответ на сообщение из Telegram'; $script:TurnSide='antigravity'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Ответ на сообщение дала модель $m2; блок Markdown ($($code.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $code)») передан в Antigravity"; Log $msg; Tg-Send $msg | Out-Null }
       else { $a=Gem-CopyWhole; Tg-Send "Ответ Gemini (модель $m2; блока Markdown нет, в Antigravity не передавал):`n`n$a" | Out-Null }
     }
     'ag' { Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag; Ag-Send -Text $c.arg -Label 'текст из Telegram'; Log 'Текст отправлен в Antigravity'; Tg-Send 'Отправил в Antigravity.' | Out-Null }
@@ -612,7 +614,7 @@ function Run-ActionCore($c){
       if($c.whole){ $a=Gem-CopyWhole } else { $a=Gem-CopyCode; if(!$a){ Tg-Send 'В последнем ответе Gemini нет блока Markdown. Напиши «передай весь ответ», если нужно передать его целиком.' | Out-Null; return } }
       if(!$a){ throw 'не нашёл ответ Gemini' }
       $hh=Check-Fresh $a
-      Ag-Send -Text $a -Label 'ответ Gemini (по команде)'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State
+      Ag-Send -Text $a -Label 'ответ Gemini (по команде)'; $script:TurnSide='antigravity'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State
       $msg="✅ По команде передал в Antigravity $(if($c.whole){'весь ответ'}else{'блок Markdown'}) (модель $m, $($a.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null
     }
     'force' {
@@ -622,7 +624,7 @@ function Run-ActionCore($c){
       $a=Gem-CopyCode; if(!$a){ Tg-Send 'В последнем ответе Gemini нет блока Markdown — передавать нечего.' | Out-Null; return }
       $hh=Get-Hash8 $a; $sf=Get-StaleFile
       if($sf){ Relay-ToAg $sf.Name $a $hh $m ' (принудительно, по команде «передай всё равно»)'; $script:StaleNotified.Remove($sf.Name) }
-      else { Ag-Send -Text $a -Label 'ответ Gemini (принудительно)'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Принудительно передал в Antigravity блок Markdown (хэш $hh, «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null }
+      else { Ag-Send -Text $a -Label 'ответ Gemini (принудительно)'; $script:TurnSide='antigravity'; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Принудительно передал в Antigravity блок Markdown (хэш $hh, «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null }
     }
     'resendstale' {
       $sf=Get-StaleFile
@@ -825,6 +827,7 @@ function Write-Status([switch]$Force){
       gwebCurReset= if($q -and $q.gweb){ [string]$q.gweb.curReset } else { '' }; gwebWkReset= if($q -and $q.gweb){ [string]$q.gweb.wkReset } else { '' }
       agH5= if($q -and $q.ag -and $q.ag.h5){ $q.ag.h5.rem } else { $null }; agH5Reset= if($q -and $q.ag -and $q.ag.h5){ [string]$q.ag.h5.reset } else { '' }
       agWk= if($q -and $q.ag -and $q.ag.wk){ $q.ag.wk.rem } else { $null }; agWkReset= if($q -and $q.ag -and $q.ag.wk){ [string]$q.ag.wk.reset } else { '' }
+      turn=[string](Get-RelayTurn -Kind $kind -Stages @($script:St.files.Keys | ForEach-Object { Get-Stage $_ }) -NextFile ([string]$nf) -LastSide ([string]$script:TurnSide) -AgWatch ([bool]$script:AgWatch))
     }
     Write-AtomicText -Path $Cfg.StatusFile -Text ($o | ConvertTo-Json -Depth 5) -NoBackup
   }catch{}
@@ -1281,7 +1284,7 @@ function Invoke-MirrorGemini([switch]$Force){
   }
   [void](Assert-AgReady)
   Ag-Send -Text $ans -Label 'ответ Gemini (наблюдатель)' -Name $n
-  Add-RelayHash $script:St $hh $Cfg.HashKeep
+  Add-RelayHash $script:St $hh $Cfg.HashKeep; $script:TurnSide='antigravity'
   if($n){ $script:Held.Remove($n); [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: ответ Gemini передан' -Force); Mark-Done $n }
   Save-State; $script:MirrorSeen=$null; [void](Play-Sound 'info')
   $msg="🔭 Наблюдатель: в Gemini новый блок Markdown (модель $m2, $($ans.Length) симв., хэш $hh, «$(Get-FirstLine $ans)»)$(if($n){" — ответ на $n"}) — передал в Antigravity"

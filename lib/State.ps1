@@ -136,3 +136,20 @@ function Test-ReportRewritten($State,[string]$Name,[datetime]$FileTime,[int]$Gra
   $t=ConvertTo-StageTime ([string]$v.time); if(-not $t){ return $false }
   ($FileTime -gt $t.AddSeconds($GraceSec))
 }
+
+# ---------- Пункт 41: чей ход (пишется воркером в relay_status.json, поле turn) ----------
+# Сторона по этапу файла: отчёт ушёл в Gemini -> ждём Gemini; ответ передан в Antigravity -> ждём Antigravity.
+function Get-TurnSideOfStage([string]$Stage,[string]$Prev){
+  switch($Stage){ {$_ -in 'sent','resend','stale'}{ 'gemini' } {$_ -in 'answered','relayed'}{ 'antigravity' } default{ $Prev } }
+}
+# Чей ход сейчас: stopped | limit | gemini | antigravity | idle. Чистая функция (тесты Item41).
+function Get-RelayTurn([string]$Kind,[string[]]$Stages=@(),[string]$NextFile='',[string]$LastSide='',[bool]$AgWatch=$false){
+  if($Kind -in 'paused','stopped'){ return 'stopped' }
+  if($Kind -eq 'limit'){ return 'limit' }
+  if(@($Stages | Where-Object { $_ -in 'sent','resend','stale' }).Count){ return 'gemini' }      # отчёт в Gemini, ждём ответ
+  if(@($Stages | Where-Object { $_ -eq 'answered' }).Count){ return 'antigravity' }             # ответ получен, идёт в Antigravity
+  if($NextFile){ return 'gemini' }                                                              # новый отчёт ждёт отправки в Gemini
+  if($AgWatch){ return 'antigravity' }                                                          # «Antigravity: текст» — ждём отчёт
+  if($LastSide -in 'gemini','antigravity'){ return $LastSide }
+  'idle'
+}
