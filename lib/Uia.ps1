@@ -49,13 +49,13 @@ function Uia-GetText($el){
   try{ $t=$el.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1); if($t){ return $t } }catch{}
   ''
 }
-function Uia-Invoke($el){ try{ $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $true }catch{ $false } }
+function Uia-Invoke($el){ Assert-Running 'нажатие (UIA)'; try{ $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $true }catch{ $false } }
 function Uia-ScrollIntoView($el){ if(!$el){ return }; try{ $el.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView() }catch{}; Start-Sleep -Milliseconds 500 }
-function Uia-Select($el){ try{ $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); $true }catch{ $false } }
+function Uia-Select($el){ Assert-Running 'выбор (UIA)'; try{ $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); $true }catch{ $false } }
 function Uia-Parent($el){ try{ [System.Windows.Automation.TreeWalker]::RawViewWalker.GetParent($el) }catch{ $null } }
 # Клик по центру видимого элемента; сначала InvokePattern (без мыши), если PreferInvoke.
 function Uia-ClickEl($el,[switch]$PreferInvoke){
-  if(!$el){ return $false }
+  if(!$el){ return $false }; Assert-Running 'нажатие (UIA)'
   if($PreferInvoke -and (Uia-Invoke $el)){ return $true }
   if(Uia-IsOffscreen $el){ return (Uia-Invoke $el) }
   $r=Uia-Rect $el; if(!$r -or ($r.R -le $r.L)){ return (Uia-Invoke $el) }
@@ -63,7 +63,7 @@ function Uia-ClickEl($el,[switch]$PreferInvoke){
 }
 function Uia-IsEnabled($el){ try{ [bool]$el.Current.IsEnabled }catch{ $false } }
 function Uia-ExpandState($el){ try{ [string]$el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState }catch{ '' } }
-function Uia-Expand($el){ try{ $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); $true }catch{ $false } }
+function Uia-Expand($el){ Assert-Running 'раскрытие (UIA)'; try{ $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); $true }catch{ $false } }
 function Uia-Collapse($el){ try{ $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse(); $true }catch{ $false } }
 # Значение ValuePattern; $null — шаблон не поддерживается (тогда можно читать TextPattern).
 function Uia-GetValue($el){ if(!$el){ return $null }; try{ [string]$el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }catch{ $null } }

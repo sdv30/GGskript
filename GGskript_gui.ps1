@@ -81,7 +81,7 @@ $btnAgT=New-Btn '🛠 Antigravity: текст' 'Ввести текст → в A
 $btnGmT=New-Btn '✨ Gemini: текст' 'Ввести текст → в Gemini; ответ покажу в журнале'
 $btnAns=New-Btn '✨ Ответ Gemini' 'Показать последний ответ Gemini в журнале'
 $btnStat=New-Btn 'ℹ️ Статус' 'Подробный статус (в Telegram и журнал)'
-$btnPause=New-Btn '⏸ Стоп' 'Пауза: окна и лимиты не трогаю, слушаю Telegram'
+$btnPause=New-Btn '⏸ Стоп' 'Полная остановка: прерываю текущее действие, мышь/клавиатуру/буфер/окна не трогаю, ничего не проверяю. Слушаю только Telegram и панель.'
 $btnStart=New-Btn '▶️ Старт' 'Запустить или продолжить работу'
 $btnShot=New-Btn '📸 Скрин' 'Снимок экрана в Telegram'
 $btnLim=New-Btn '📊 Лимиты' 'Проверить лимиты Gemini и Antigravity'
@@ -96,6 +96,12 @@ Add-BtnRow 'ТЕКСТ И ОТВЕТЫ' @($btnAgT,$btnGmT,$btnAns)
 Add-BtnRow 'УПРАВЛЕНИЕ' @($btnStat,$btnPause,$btnStart)
 Add-BtnRow 'ПРОЧЕЕ' @($btnShot,$btnLim,$btnHelp)
 Add-BtnRow '' @($btnMore,$chkAuto)
+# ---- пункт 39: режим без мыши (порты отладки) ----
+$btnCdpG=New-Btn '🌐 Chrome с портом' 'Открыть отдельный Chrome для Gemini с портом 9222 (обычный Chrome/Яндекс не закрываю). С портом скрипт работает без мыши.' 200
+$btnCdpA=New-Btn '🛠 Antigravity с портом' 'Перезапустить Antigravity с портом 9333 (спрошу подтверждение). С портом — без мыши и автоподтверждение надёжнее.' 200
+$lblCdpG=New-Lbl '○ Gemini 9222: …'; $lblCdpA=New-Lbl '○ Antigravity 9333: …'
+foreach($l in $lblCdpG,$lblCdpA){ $l.Margin=New-Object System.Windows.Forms.Padding(6,9,3,2); $l.ForeColor=[System.Drawing.Color]::Gray }
+Add-BtnRow 'РЕЖИМ БЕЗ МЫШИ' @($btnCdpG,$btnCdpA,$lblCdpG,$lblCdpA)
 
 # ---- меню «☰ Ещё» ----
 $menu=New-Object System.Windows.Forms.ContextMenuStrip; $menu.Font=$btnFont; $menu.ShowImageMargin=$false
@@ -155,7 +161,7 @@ function Update-Status{
   }catch{}
 }
 $timer=New-Object System.Windows.Forms.Timer; $timer.Interval=800
-$timer.Add_Tick({ Load-LogTail; Update-Status })
+$timer.Add_Tick({ Load-LogTail; Update-Status; try{ Update-CdpView }catch{} })
 
 # ---- ввод текста для «Gemini: текст» / «Antigravity: текст» ----
 function Show-TextInput([string]$title,[string]$hint){
@@ -175,7 +181,7 @@ function Send-PcText([string]$k,[string]$text){ Send-Cmd ("/pc_$k b64:"+[Convert
 function Confirm-Gui([string]$msg){ ([System.Windows.Forms.MessageBox]::Show($form,$msg,'GGskript',[System.Windows.Forms.MessageBoxButtons]::OKCancel,[System.Windows.Forms.MessageBoxIcon]::Question)) -eq 'OK' }
 
 $btnStart.Add_Click({ Remove-Item -LiteralPath $Cfg.PauseFile -EA 0; if(-not (Worker-Alive)){ Start-Worker } else { Send-Cmd 'старт' } })
-$btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{} })
+$btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}; Send-Cmd 'стоп'; $lblState.Text='Состояние: ⏸ Остановлен — ничего не делаю'; $lblState.ForeColor=[System.Drawing.Color]::DarkOrange })
 $miExit.Add_Click({
   $r=[System.Windows.Forms.MessageBox]::Show($form,"Выключить GGskript (воркер) совсем? Из Telegram запустить снова будет нельзя — только кнопкой «Старт» здесь или ярлыком.`nЧтобы просто остановиться и слушать Telegram — кнопка «Стоп».",'GGskript',[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Warning)
   if($r -eq 'Yes'){ try{ New-Item -ItemType File $Cfg.StopFile -Force | Out-Null }catch{} }
@@ -186,6 +192,19 @@ $btnRep.Add_Click({ if(Confirm-Gui "Отправить в Gemini заново п
 $btnFwd.Add_Click({ if(Confirm-Gui "Переслать в Antigravity ВЕСЬ последний ответ Gemini целиком (не только блок Markdown)?"){ Send-Cmd '/pc_toag' } })
 $btnGmT.Add_Click({ $t=Show-TextInput '✨ Gemini: текст' 'Текст для Gemini. Отправлю и покажу ответ в журнале. Ctrl+Enter — отправить.'; if($t){ Send-PcText 'gemask' $t } })
 $btnAgT.Add_Click({ $t=Show-TextInput '🛠 Antigravity: текст' 'Текст для агента Antigravity. Ответом будет его новый отчёт в Downloads — покажу в журнале. Ctrl+Enter — отправить.'; if($t){ Send-PcText 'agask' $t } })
+$script:cdpAt=[datetime]::MinValue
+function Update-CdpView([switch]$Force){
+  if(-not $Force -and ((Get-Date)-$script:cdpAt).TotalSeconds -lt 5){ return }; $script:cdpAt=Get-Date
+  foreach($x in @(@($lblCdpG,'Gemini',[int]$Cfg.CdpPort),@($lblCdpA,'Antigravity',[int]$Cfg.AgCdpPort))){ $v=Get-PortView (Test-PortUp $x[2]) $x[1] $x[2]; $x[0].Text=$v.Text; $x[0].ForeColor=[System.Drawing.Color]::FromName($v.Color) }
+}
+function Write-PanelLog([string]$m){ $txtLog.AppendText("$(Get-Date -Format 'HH:mm:ss') $m`r`n"); $txtLog.ScrollToCaret() }
+$btnCdpG.Add_Click({ try{ Write-PanelLog (Start-GeminiCdpChrome ([int]$Cfg.CdpPort)) }catch{ Write-PanelLog "❌ Chrome с портом: $($_.Exception.Message)" }; Send-Cmd '/pc_cdpcheck'; Update-CdpView -Force })
+$btnCdpA.Add_Click({
+  if(-not (Confirm-Gui "Перезапустить Antigravity с портом отладки $($Cfg.AgCdpPort)?`n`nAntigravity закроется (как File → Exit) и сразу откроется снова. Несохранённые файлы он предложит сохранить.`nПосле перезапуска откройте прошлый разговор: значок часов → последний → Open in current window.`n`nСовет: сначала нажмите «⏸ Стоп», после перезапуска — «▶️ Старт».")){ return }
+  $form.Cursor=[System.Windows.Forms.Cursors]::WaitCursor
+  try{ Write-PanelLog (Restart-AgCdp ([int]$Cfg.AgCdpPort)) }catch{ Write-PanelLog "❌ Antigravity с портом: $($_.Exception.Message)" } finally { $form.Cursor=[System.Windows.Forms.Cursors]::Default }
+  Send-Cmd '/pc_cdpcheck'; Update-CdpView -Force
+})
 $btnMore.Add_Click({ $menu.Show($btnMore,(New-Object System.Drawing.Point(0,$btnMore.Height))) })
 $script:chkSync=$false; $script:chkAt=[datetime]::MinValue
 $chkAuto.Add_CheckedChanged({

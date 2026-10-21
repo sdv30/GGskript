@@ -158,7 +158,7 @@ Describe 'Пункт 25B: в режиме СТОП — никаких прове
     (Sent '⏹ Сейчас СТОП*').Count | Should -Be 1; $script:Queue.Count | Should -Be 0; Should -Invoke Check-Quotas -Times 0
   }
   It '«статус», «скрин», «помощь» на СТОП работают' {
-    Handle-Command 'статус' 'tg'; (Sent '*СТОП — жду «Старт»*').Count | Should -Be 1
+    Handle-Command 'статус' 'tg'; (Sent '*Остановлен — ничего не делаю*').Count | Should -Be 1
     Handle-Command 'скрин' 'tg'; Should -Invoke Send-Screenshot -Times 1
     Handle-Command 'помощь' 'tg'; (Sent '*команды*').Count | Should -Be 1
   }
@@ -178,7 +178,7 @@ Describe 'Пункт 25B: в режиме СТОП — никаких прове
     $script:LimitStop=$true; Mock Write-AtomicText { $script:StatusJson=$Text }
     $null=& (Get-Command Write-Status -CommandType Function).ScriptBlock -Force
     ($script:StatusJson | ConvertFrom-Json).kind | Should -Be 'paused'
-    (Get-GuiStateView ([pscustomobject]@{ kind='paused'; state='x' })).State | Should -Match 'СТОП'
+    (Get-GuiStateView ([pscustomobject]@{ kind='paused'; state='x' })).State | Should -Match 'Остановлен'
   }
 }
 
@@ -197,7 +197,7 @@ Describe 'Пункт 25B: «Стоп» прерывает ожидание от�
     { Process-File ((Get-Files) | Where-Object Name -eq (N 7)) } | Should -Throw -ExceptionType ([GG.RelayPausedException])
     Should -Invoke Gem-CopyCode -Times 0; Should -Invoke Ag-Send -Times 0
     Get-Stage (N 7) | Should -Be 'sent'; $script:AbortOnStop | Should -BeFalse
-    (Sent '*ожидание ответа Gemini прерываю*').Count | Should -Be 1
+    (Sent '*Текущее действие прервал*').Count | Should -Be 1
   }
 }
 
@@ -215,7 +215,7 @@ Describe 'Пункт 25C: «стоп» и «выключи скрипт»' -Tag 
   It '«стоп» — процесс жив (StopReq нет), PAUSE создан; повтор — «Уже СТОП»' {
     Handle-Command 'стоп' 'tg'
     $script:Paused | Should -BeTrue; $script:StopReq | Should -BeFalse; Test-Path $Cfg.PauseFile | Should -BeTrue
-    (Sent '⏹ GGskript: СТОП*').Count | Should -Be 1
+    (Sent '⏸ GGskript: Остановлен*').Count | Should -Be 1
     Handle-Command 'пауза' 'tg'; (Sent '⏹ Уже СТОП*').Count | Should -Be 1
   }
   It '«выключи скрипт» из Telegram — только после подтверждения; «Нет» — не выключаю' {

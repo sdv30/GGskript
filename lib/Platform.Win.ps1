@@ -89,7 +89,7 @@ function Get-WindowInfo($h){
 function Get-IdleMs{ [GG.Native]::IdleMs() }
 function Test-ModifiersDown{ foreach($vk in 0x10,0x11,0x12,0x5B,0x5C){ if([GG.Native]::GetAsyncKeyState($vk) -band 0x8000){ return $true } }; $false }
 
-function Activate-Window($h){
+function Activate-Window($h){ Assert-Running 'переключение окна';
   $h=[IntPtr]$h
   if([GG.Native]::IsIconic($h)){ [void][GG.Native]::ShowWindow($h,9); Start-Sleep -Milliseconds 400 }
   for($i=0;$i -lt 5;$i++){
@@ -134,9 +134,18 @@ function Invoke-WithFocus{
   }
 }
 
+# ---------- Пункт 38: «Стоп» прерывает любое действие сразу ----------
+# Проверка перед каждым кликом, клавишей, записью в буфер, UIA-нажатием и CDP-командой.
+# В воркере ($script:GGWorker) смотрим ещё и файл PAUSE: панель ставит его мгновенно, даже посреди операции.
+function Test-StopNow{
+  if($script:Paused){ return $true }
+  if($script:GGWorker -and $Cfg -and $Cfg.PauseFile){ try{ return [IO.File]::Exists([string]$Cfg.PauseFile) }catch{} }
+  $false
+}
+function Assert-Running([string]$ctx='действие'){ if(Test-StopNow){ throw [GG.RelayPausedException]::new("СТОП — $ctx прервано") } }
 # ---------- Клавиатура и мышь ----------
 function Wait-ModifiersUp([int]$MaxMs=3000){ $t0=Get-Date; while((Test-ModifiersDown) -and ((Get-Date)-$t0).TotalMilliseconds -lt $MaxMs){ Start-Sleep -Milliseconds 100 } }
-function KeyDown([int]$vk){ [GG.Native]::keybd_event([byte]$vk,0,0,0) }
+function KeyDown([int]$vk){ Assert-Running 'нажатие клавиши'; [GG.Native]::keybd_event([byte]$vk,0,0,0) }
 function KeyUp([int]$vk){ [GG.Native]::keybd_event([byte]$vk,0,2,0) }
 function Send-Key([int]$vk){ KeyDown $vk; try{ Start-Sleep -Milliseconds 30 } finally { KeyUp $vk }; Start-Sleep -Milliseconds 80 }
 function Send-Ctrl([int]$vk){ Wait-ModifiersUp; KeyDown 0x11; try{ Start-Sleep -Milliseconds 30; Send-Key $vk } finally { KeyUp 0x11 }; Start-Sleep -Milliseconds 150 }
@@ -150,6 +159,7 @@ function Test-WindowPing($h,[int]$TimeoutMs=2000){ try{ $r=[UIntPtr]::Zero; [GG.
 function Test-ProcessResponding($ProcessId){ try{ [bool](Get-Process -Id $ProcessId -EA Stop).Responding }catch{ $null } }
 function PressEsc{ Wait-ModifiersUp; Send-Key 0x1B }
 function ClickAt($x,$y){
+  Assert-Running 'клик мышью'
   $p=[System.Windows.Forms.Cursor]::Position
   [void][GG.Native]::SetCursorPos([int]$x,[int]$y); Start-Sleep -Milliseconds 150
   [GG.Native]::mouse_event(2,0,0,0,0); [GG.Native]::mouse_event(4,0,0,0,0); Start-Sleep -Milliseconds 300
@@ -161,6 +171,7 @@ function ClickRel($h,$fx,$fy){ $r=Get-WindowBounds $h; ClickAt ($r.L+($r.R-$r.L)
 function Get-ClipSeq{ [GG.Native]::GetClipboardSequenceNumber() }
 function Get-ClipText{ for($i=0;$i -lt 10;$i++){ try{ return [System.Windows.Forms.Clipboard]::GetText() }catch{ Start-Sleep -Milliseconds 300 } }; throw 'Буфер обмена занят (чтение)' }
 function Set-ClipText([string]$Text){
+  Assert-Running 'запись в буфер обмена'
   $do=New-Object System.Windows.Forms.DataObject
   $do.SetText($Text,[System.Windows.Forms.TextDataFormat]::UnicodeText)
   if($Cfg.ClipExcludeHistory){

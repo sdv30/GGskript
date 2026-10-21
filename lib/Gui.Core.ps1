@@ -51,7 +51,7 @@ function Format-GuiLimits($j){
   if($j.quotaTime){ "Лимиты ($($j.quotaTime)) — $g | $a" } else { "Лимиты: $g | $a" }
 }
 function Get-GuiStateView($j){
-  $tag= switch([string]$j.kind){ 'running'{'работает'} 'paused'{'СТОП (ждёт «Старт»)'} 'limit'{'ОСТАНОВЛЕНО (лимит/модель)'} 'stopped'{'остановлен'} default{[string]$j.kind} }
+  $tag= switch([string]$j.kind){ 'running'{'работает'} 'paused'{'⏸ Остановлен — ничего не делаю'} 'limit'{'ОСТАНОВЛЕНО (лимит/модель)'} 'stopped'{'остановлен'} default{[string]$j.kind} }
   $color= switch([string]$j.kind){ 'running'{'ForestGreen'} 'paused'{'DarkOrange'} 'limit'{'Firebrick'} 'stopped'{'DimGray'} default{'Black'} }
   $pend= if($j.pending -and @($j.pending).Count){ (@($j.pending) -join '; ') } else { 'нет' }
   @{ State="Состояние: $tag — $($j.state)"; Color=$color
@@ -63,3 +63,40 @@ function Get-GuiStateView($j){
 function Get-CloseAction([string]$CloseReason){ if($CloseReason -eq 'UserClosing'){ 'ask' } else { 'close' } }
 # Автопрокрутка: только если пользователь и так был в конце (не сбивать чтение старых строк).
 function Test-AtEnd([int]$SelectionStart,[int]$TextLength){ $SelectionStart -ge ($TextLength-2) }
+
+# ---------- Пункт 39: режим без мыши — Chrome и Antigravity с портом отладки (только по кнопке пользователя) ----------
+# Порт слушает на 127.0.0.1? (быстро, без исключений наружу)
+function Test-PortUp([int]$Port,[int]$TimeoutMs=300){
+  $c=New-Object System.Net.Sockets.TcpClient
+  try{ $a=$c.BeginConnect('127.0.0.1',$Port,$null,$null); if(-not $a.AsyncWaitHandle.WaitOne($TimeoutMs)){ return $false }; $c.EndConnect($a); $true }catch{ $false } finally { $c.Close() }
+}
+function Get-PortView([bool]$Up,[string]$Name,[int]$Port){ @{ Text="$(if($Up){'●'}else{'○'}) $Name ${Port}: $(if($Up){'порт есть — без мыши'}else{'нет порта — через окно'})"; Color=$(if($Up){'ForestGreen'}else{'Gray'}) } }
+function Find-FirstPath([string[]]$Paths){ foreach($p in $Paths){ if($p -and (Test-Path -LiteralPath $p)){ return $p } }; $null }
+function Get-ChromeExe{ Find-FirstPath @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe","${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe","$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe") }
+function Get-AgExe{ Find-FirstPath @("$env:LOCALAPPDATA\Programs\Antigravity IDE\Antigravity IDE.exe","$env:LOCALAPPDATA\Programs\Antigravity\Antigravity.exe") }
+# Аргументы как в Start-GeminiChrome.bat: отдельный профиль GGskript, обычный Chrome/Яндекс не трогаем.
+function Get-GeminiChromeArgs([int]$Port,[string]$Profile){
+  @("--remote-debugging-port=$Port",'--remote-debugging-address=127.0.0.1',"--remote-allow-origins=http://127.0.0.1:$Port","--user-data-dir=`"$Profile`"",'--no-first-run','--no-default-browser-check','https://gemini.google.com/app','https://gemini.google.com/usage')
+}
+function Get-AgDebugArgs([int]$Port){ @("--remote-debugging-port=$Port","--remote-allow-origins=http://127.0.0.1:$Port") }
+# Запуск Chrome для Gemini с портом. Возвращает строку для журнала.
+function Start-GeminiCdpChrome([int]$Port=9222,[scriptblock]$Starter={ param($exe,$a) Start-Process -FilePath $exe -ArgumentList $a }){
+  if(Test-PortUp $Port){ return "🌐 Chrome с портом $Port уже запущен — новый не открываю." }
+  $exe=Get-ChromeExe; if(-not $exe){ return '❌ Google Chrome не найден.' }
+  $prof=Join-Path $env:LOCALAPPDATA 'GGskript\chrome-gemini-profile'; if(-not (Test-Path -LiteralPath $prof)){ [void](New-Item -ItemType Directory $prof -Force) }
+  & $Starter $exe (Get-GeminiChromeArgs $Port $prof)
+  "🌐 Запустил отдельный Chrome для Gemini с портом $Port (профиль GGskript). Обычный Chrome/Яндекс не трогал. Первый раз войдите в Google и откройте свой чат."
+}
+# Перезапуск Antigravity с портом: мягко закрыть (CloseMainWindow), подождать, запустить с флагом.
+function Restart-AgCdp([int]$Port=9333,[int]$WaitSec=30,
+  [scriptblock]$GetProcs={ @(Get-Process -Name 'Antigravity IDE','Antigravity' -EA 0) },
+  [scriptblock]$Starter={ param($exe,$a) Start-Process -FilePath $exe -ArgumentList $a }){
+  if(Test-PortUp $Port){ return "🛠 Antigravity уже с портом $Port — перезапуск не нужен." }
+  $exe=Get-AgExe; if(-not $exe){ return '❌ Antigravity не найден.' }
+  $ps=@(& $GetProcs)
+  foreach($p in $ps){ try{ if($p.MainWindowHandle -ne [IntPtr]::Zero){ [void]$p.CloseMainWindow() } }catch{} }
+  $t0=Get-Date; while(@(& $GetProcs).Count -and ((Get-Date)-$t0).TotalSeconds -lt $WaitSec){ Start-Sleep -Milliseconds 500 }
+  if(@(& $GetProcs).Count){ return "❌ Antigravity не закрылся за $WaitSec с (возможно, ждёт сохранения файла). Закройте его сами (File → Exit) и нажмите кнопку ещё раз." }
+  & $Starter $exe (Get-AgDebugArgs $Port)
+  "🛠 Перезапустил Antigravity с портом $Port. Откройте прошлый разговор: значок часов → последний → Open in current window."
+}

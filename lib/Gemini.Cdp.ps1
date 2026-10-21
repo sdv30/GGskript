@@ -142,6 +142,7 @@ function Connect-Cdp([switch]$Force){
 }
 function Invoke-Cdp{
   param([string]$Method,$Params=@{},[int]$TimeoutSec=30,$Conn)
+  Assert-Running "CDP $Method"
   if(-not $Conn){ $Conn=Connect-Cdp }
   $Conn.nextId++; $id=$Conn.nextId
   Cdp-SendText $Conn (@{ id=$id; method=$Method; params=$Params } | ConvertTo-Json -Depth 10 -Compress)

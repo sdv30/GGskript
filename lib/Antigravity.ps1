@@ -17,7 +17,7 @@ function AgUia-FindInput($h,[int]$Tries=3){
 # Ждёт условие до $Sec секунд (опрос раз в 300 мс). Возвращает $true/$false.
 function Wait-Until([scriptblock]$Cond,[double]$Sec=5,[int]$StepMs=300){
   $n=[Math]::Max(1,[int][Math]::Ceiling($Sec*1000/$StepMs))
-  for($i=0;$i -lt $n;$i++){ if(& $Cond){ return $true }; Start-Sleep -Milliseconds $StepMs }
+  for($i=0;$i -lt $n;$i++){ Assert-Running 'ожидание'; if(& $Cond){ return $true }; Start-Sleep -Milliseconds $StepMs }
   [bool](& $Cond)
 }
 

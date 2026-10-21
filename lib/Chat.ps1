@@ -213,6 +213,7 @@ function Send-GeminiManual([string]$Text,[switch]$SendCopy){
 $script:AgWatch=$null; $script:AgWatchLast=Get-Date
 function Start-AgWatch([string]$Src='tg'){ $script:AgWatch=@{ src=$Src; since=(Get-Date); known=@(Get-Files -All | ForEach-Object { $_.Name }); until=(Get-Date).AddMinutes([double]$Cfg.AgReplyWaitMin) } }
 function Check-AgWatch{
+  if(Test-StopNow){ return }
   if(-not $script:AgWatch -or ((Get-Date)-$script:AgWatchLast).TotalSeconds -lt 5){ return }; $script:AgWatchLast=Get-Date
   $w=$script:AgWatch
   $f=@(Get-Files -All | Where-Object { $w.known -notcontains $_.Name -and $_.LastWriteTime -ge $w.since.AddSeconds(-2) -and ((Get-Date)-$_.LastWriteTime).TotalSeconds -ge 3 }) | Select-Object -First 1

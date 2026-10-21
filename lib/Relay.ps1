@@ -161,6 +161,7 @@ function Is-Argon($m){ [bool]($m -and ([string]$m).IndexOf($Cfg.ModelMustContain
 $script:SoundLast=@{}
 function Invoke-Beep([int]$Freq,[int]$Ms){ if($env:GG_NO_BEEP -eq '1'){ return }; try{ [Console]::Beep($Freq,$Ms) }catch{} }
 function Play-Sound([string]$Kind){
+  if(Test-StopNow){ return $false }
   $last=$script:SoundLast[$Kind]
   if(-not (Test-SoundAllowed $Kind ([string]$Cfg.Sounds) $last (Get-Date) ([double]$Cfg.SoundRepeatMin))){ return $false }
   $script:SoundLast[$Kind]=Get-Date
@@ -429,7 +430,7 @@ function Get-StatusText{
   $acc=try{ $h=Ag-GetWindow; [bool]($h -and (Find-AcceptAll $h)) }catch{ $false }
   $pend=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -in @('sent','answered','resend','stale') } | ForEach-Object { "$_ — $(Get-StageRu (Get-Stage $_))" }) -join '; '; if(!$pend){ $pend='нет' }
   $tail= try{ (Get-Content -LiteralPath $Cfg.LogFile -Encoding UTF8 -Tail 5) -join "`n" }catch{ '' }
-  $st= if($script:Paused){ "⏹ СТОП — жду «Старт» (слушаю Telegram, окна не трогаю)" } else { $script:State }
+  $st= if($script:Paused){ "⏸ Остановлен — ничего не делаю (жду «Старт»)" } else { $script:State }
   $lim= if($script:LimitStop){ "ДА — модель «$($script:LimitModel)» вместо $($Cfg.ModelMustContain) с $($script:LimitSince.ToString('HH:mm')) (Якутск)" } else { 'нет' }
   $nx=Next-FileName
   $auto= if(-not $Cfg.AutoResume){ 'выключено (AutoResume=false)' } elseif($script:AutoPlan){ "проверю в $(Format-PlanTime $script:AutoPlan.at) — $($script:AutoPlan.why)" } else { 'не требуется' }
@@ -457,7 +458,7 @@ $tail
 $script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','fwdans','fwdans-prep','fwdtext','resendfile','gemask','agask','fwdans-pc')
 function Get-StopRefusal([string]$K){ "⏹ Сейчас СТОП — окна не трогаю, команду ($K) не выполняю. Нажмите «Старт», потом повторите." }
 function Invoke-StoppedStep{
-  $script:State='⏹ стоп — жду «Старт» (слушаю Telegram, окна не трогаю)'
+  $script:State='⏸ Остановлен — ничего не делаю (жду «Старт»)'
   if($script:NeedStart -and -not $script:StopAnnounced){
     $script:StopAnnounced=$true
     $msg="🚀 GGskript v2 запущен (pid $PID) в режиме СТОП: окна, лимиты и модель не проверяю, ничего не отправляю, слушаю Telegram.`n«Старт» — выполнить протокол запуска и начать работу. «выключи скрипт» — завершить процесс."
@@ -570,10 +571,13 @@ function Run-Action($c){
 }
 # Кнопки панели: текст приходит как b64:<base64 UTF-8> (многострочный текст в одной строке commands.txt).
 function ConvertFrom-PcArg([string]$A){ $a=$A.Trim(); if($a -match '^b64:(.*)$'){ if(-not $matches[1]){ return '' }; try{ return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($matches[1])) }catch{ return '' } }; $a }
+# Пункт 39: после кнопок «… с портом» — не ждать CdpRecheckSec, а сразу попробовать CDP снова.
+function Reset-CdpRecheck{ $script:CdpDownUntil=$null; $script:AgCdpDownUntil=$null }
 function Invoke-PcButton([string]$K,[string]$Arg){
   $k=$K.ToLower()
   if($script:Paused -and $k -in 'gemask','agask','togemini','toag','answer'){ Log "Стоп: кнопка панели $k не выполнена — нажмите «Старт»"; return }
   switch($k){
+    'cdpcheck' { Reset-CdpRecheck; Log '🌐 Порты отладки: проверю CDP Gemini и Antigravity при следующем обращении (кнопка панели)' }
     'gemask'   { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log 'Gemini: пустой текст — ничего не отправлено'; return }; $script:Queue.Enqueue(@{ k='gemask'; text=$t.Trim(); src='pc' }); Log "✨ Gemini: текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}) и покажу ответ здесь" }
     'agask'    { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log 'Antigravity: пустой текст — ничего не отправлено'; return }; $script:Queue.Enqueue(@{ k='agask'; text=$t.Trim(); src='pc' }); Log "🛠 Antigravity: текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}); ответом будет новый отчёт агента" }
     'togemini' { $f=@(Get-Files) | Select-Object -Last 1; if(-not $f){ Log 'В Downloads нет отчётов агента — пересылать нечего.'; return }; $script:Queue.Enqueue(@{ k='resendfile'; name=$f.Name; src='pc' }) }
@@ -715,7 +719,10 @@ function Check-AgQueue{
 # ---------- Pump / Nap ----------
 function Pump{ Poll-Tg; Sweep-TgPrompts; try{ Check-Shutdown }catch{ Log "Выключение: $($_.Exception.Message)" }; Read-CmdFile; Check-LocalControl; Write-Status; if($script:StopReq){ throw [GG.RelayStopException]::new() }
   if($script:Paused -and $script:AbortOnStop){ $script:AbortOnStop=$false; throw [GG.RelayPausedException]::new('СТОП — ожидание ответа Gemini прервано (после «Старт» протокол проверит чат)') }
-  Invoke-AuxDuringWait; Invoke-AutoAllowTick; try{ Check-AgWatch }catch{ Log "Ответ Antigravity: $($_.Exception.Message)" } }
+  # пункт 38: «Стоп» посреди любого рабочего шага (вставка, копирование, прикрепление, ожидание) — прерываем его сразу
+  if($script:Paused -and $script:Busy){ throw [GG.RelayPausedException]::new('СТОП — текущее действие прервано') }
+  if($script:Paused){ return }   # на стопе: никаких фоновых действий (автоподтверждение, Accept all, ответ Antigravity)
+  Invoke-AuxDuringWait; Invoke-AutoAllowTick; try{ Check-AgWatch }catch{ if((Get-ErrorKind $_) -eq 'paused'){ throw }; Log "Ответ Antigravity: $($_.Exception.Message)" } }
 # Ожидание ответа Gemini, которое «Стоп» может прервать (пункт 25B). Внутри — только чтение окна Gemini.
 function Wait-GemAnswerStoppable($ctx){ $script:AbortOnStop=$true; try{ Gem-WaitAnswer $ctx } finally { $script:AbortOnStop=$false } }
 # AcceptAllDuringWait: во время долгого ожидания ответа Gemini нажимать Accept all (и смотреть очередь Antigravity).
@@ -737,7 +744,7 @@ function Set-AutoAllow([bool]$On,[string]$Source='pc'){
   try{ Write-Status -Force }catch{}
 }
 function Try-AutoAllow{
-  if(-not $Cfg.AutoAllowPrompts){ return $false }
+  if(-not $Cfg.AutoAllowPrompts -or (Test-StopNow)){ return $false }
   $r=$null
   if($Cfg.AgTransport -eq 'cdp'){ try{ $r=AgCdp-AllowPrompt; if($r -and $r.ok){ $r.how='CDP, без фокуса' } }catch{ $r=$null } }
   if(-not ($r -and $r.ok)){
@@ -753,6 +760,7 @@ function Try-AutoAllow{
 }
 # Из Pump: и в простое, и во время ожидания Gemini. Не внутри операций с фокусом/буфером, не к зависшему окну, без повторного входа.
 function Invoke-AutoAllowTick{
+  if(Test-StopNow){ return }
   if(-not $Cfg.AutoAllowPrompts -or $script:InAutoAllow -or [int]$script:FocusDepth -gt 0){ return }
   if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return }
   if(((Get-Date)-$script:LastAutoAllow).TotalSeconds -lt [Math]::Max(1,[double]$Cfg.AutoAllowEverySec)){ return }
@@ -769,7 +777,7 @@ function Set-Pause($on,$src){
   $script:Paused=$on
   if($on){ $script:PausedSince=Get-Date } elseif(-not $script:PausedSince -or ((Get-Date)-$script:PausedSince).TotalMinutes -ge [double]$Cfg.StartupTriagePauseMin){ $script:TriageNeeded=$true }
   # пункт 25C: «стоп» = процесс жив и слушает Telegram, но ничего не отправляет, лимиты/модель не проверяет и окна не трогает
-  if($on){ $msg="⏹ GGskript: СТОП ($src). Слушаю Telegram, но ничего не отправляю, лимиты и модель не проверяю, окна не трогаю$(if($script:AbortOnStop){'; ожидание ответа Gemini прерываю'}elseif($script:Busy){'; короткий текущий шаг доделаю'}).`nПродолжить — «Старт» (сначала проверю окна, лимиты, модель и чаты). Выключить скрипт совсем — «выключи скрипт»." }
+  if($on){ $script:MirrorSeen=$null; $msg="⏸ GGskript: Остановлен ($src) — ничего не делаю.$(if($script:Busy -or $script:AbortOnStop){' Текущее действие прервал.'})`nМышь, клавиатуру, буфер обмена и окна не трогаю; автоподтверждение, Accept all, наблюдатель, лимиты, модель, закрытие окон и звуки выключены. Слушаю только Telegram и панель.`nПродолжить — «Старт» (сначала проверю окна, лимиты, модель и чаты). Выключить скрипт совсем — «выключи скрипт»." }
   else { $msg="▶️ GGskript: старт ($src) — выполняю протокол запуска"; $script:NeedStart=$true; $script:LastStartTry=(Get-Date).AddYears(-1); $script:LastStartReport=''; $script:StopAnnounced=$true }
   Log $msg; Tg-Send $msg | Out-Null; Update-Title
 }

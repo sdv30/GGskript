@@ -7,6 +7,7 @@ $Root=$PSScriptRoot
 foreach($f in 'State','Platform.Win','Uia','Telegram','Gemini.Uia','Gemini.Cdp','Gemini','Antigravity','Antigravity.Cdp','Relay','Chat','Shutdown'){ . (Join-Path $Root "lib\$f.ps1") }
 $ms=Merge-Settings -Defaults (Get-DefaultSettings -Root $Root) -OverridePath (Join-Path $Root 'relay_settings.json')
 $Cfg=$ms.Cfg
+$script:GGWorker=$true   # пункт 38: Test-StopNow смотрит и файл PAUSE
 # -testparse — только разбор команд: без WinAPI, без чтения Downloads и состояния
 if($args -contains '-testparse'){
   @('статус','Что происходит?','пауза','остановись на время','продолжай','стоп','выключи реле','прими','нажми принять','напиши джемини: привет','Гемини, как дела','/gemini тест','напиши антигравити: запусти тесты','/ag тест','передай ответ','передай весь ответ','передай всё равно','отправь заново','что ответил джемини','скрин','покажи экран','помощь','/start','абракадабра','принял, спасибо','джемини завершил?','продолжай, не стоп','Режим вывода команд на экран (ECHO) отключен.') |
