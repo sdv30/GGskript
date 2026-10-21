@@ -31,7 +31,7 @@ $mono=New-Object System.Drawing.Font('Consolas',9.5)
 $form=New-Object System.Windows.Forms.Form
 $form.AutoScaleMode=[System.Windows.Forms.AutoScaleMode]::Dpi
 $form.Text='GGskript'; $form.Font=$font
-$form.Size=New-Object System.Drawing.Size(820,740)
+$form.Size=New-Object System.Drawing.Size(820,708)
 $form.MinimumSize=New-Object System.Drawing.Size(700,620)
 $form.StartPosition='CenterScreen'
 try{ if(Test-Path -LiteralPath $IcoF){ $form.Icon=New-Object System.Drawing.Icon($IcoF) } }catch{}
@@ -144,9 +144,9 @@ namespace GG { public class TurnPanel : System.Windows.Forms.Panel {
 '@
 }
 $script:turnView=Get-TurnView 'idle' $false; $script:turnPhase=0
-$pnlTurn=New-Object GG.TurnPanel; $pnlTurn.Dock='Top'; $pnlTurn.Height=104; $pnlTurn.BackColor=[System.Drawing.Color]::White
+$pnlTurn=New-Object GG.TurnPanel; $pnlTurn.Dock='Top'; $pnlTurn.Height=72; $pnlTurn.BackColor=[System.Drawing.Color]::White
 $tfEmo=New-Object System.Drawing.Font('Segoe UI Emoji',20); $tfName=New-Object System.Drawing.Font('Segoe UI',12,[System.Drawing.FontStyle]::Bold)
-$tfSub=New-Object System.Drawing.Font('Segoe UI',8.5); $tfCap=New-Object System.Drawing.Font('Segoe UI',11,[System.Drawing.FontStyle]::Bold); $tfArr=New-Object System.Drawing.Font('Segoe UI',15,[System.Drawing.FontStyle]::Bold); $tfChev=New-Object System.Drawing.Font('Segoe UI',14,[System.Drawing.FontStyle]::Bold)
+$tfSub=New-Object System.Drawing.Font('Segoe UI',8.5); $tfCap=New-Object System.Drawing.Font('Segoe UI',11,[System.Drawing.FontStyle]::Bold); $tfChev=New-Object System.Drawing.Font('Segoe UI',14,[System.Drawing.FontStyle]::Bold)
 function Get-TilePal([string]$st){
   $C=[System.Drawing.Color]
   switch($st){
@@ -163,7 +163,7 @@ function New-RoundPath([System.Drawing.RectangleF]$r,[float]$rad){
 $pnlTurn.Add_Paint({ param($s,$e)
   try{
     $g=$e.Graphics; $g.SmoothingMode='AntiAlias'; $g.TextRenderingHint='ClearTypeGridFit'; $v=$script:turnView
-    $W=[float]$s.ClientSize.Width; $gap=[Math]::Max(150,[Math]::Min(220,$W*0.26)); $tw=[Math]::Min(250,($W-$gap-24)/2); $top=24; $th=66
+    $W=[float]$s.ClientSize.Width; $gap=[Math]::Max(150,[Math]::Min(220,$W*0.26)); $tw=[Math]::Min(250,($W-$gap-24)/2); $top=8; $th=53
     $xG=($W-$gap)/2-$tw; $xA=($W+$gap)/2
     $sf=New-Object System.Drawing.StringFormat; $sf.Alignment='Center'; $sf.LineAlignment='Center'
     $sfL=New-Object System.Drawing.StringFormat; $sfL.LineAlignment='Center'
@@ -173,12 +173,8 @@ $pnlTurn.Add_Paint({ param($s,$e)
       $g.FillPath((New-Object System.Drawing.SolidBrush($pal.Fill)),$path)
       $g.DrawPath((New-Object System.Drawing.Pen($pal.Edge,$(if($t[3] -in 'active','limit'){2.5}else{1}))),$path); $path.Dispose()
       $g.DrawString($t[1],$tfEmo,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+10),$r.Y,44,$r.Height)),$sf)
-      $g.DrawString($t[2],$tfName,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+58),($r.Y+8),($tw-62),28)),$sfL)
-      $g.DrawString((Get-TurnTileSub $t[3]),$tfSub,(New-Object System.Drawing.SolidBrush($pal.Sub)),(New-Object System.Drawing.RectangleF(($r.X+59),($r.Y+34),($tw-62),22)),$sfL)
-      if($t[3] -eq 'active'){
-        $bob=[float](4*[Math]::Sin($script:turnPhase*[Math]::PI/4)); $alpha=[int](170+85*[Math]::Abs([Math]::Cos($script:turnPhase*[Math]::PI/8)))
-        $g.DrawString('▼',$tfArr,(New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($alpha,34,139,34))),(New-Object System.Drawing.RectangleF($r.X,(-2+$bob),$tw,24)),$sf)
-      }
+      $g.DrawString($t[2],$tfName,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+58),($r.Y+3),($tw-62),26)),$sfL)
+      $g.DrawString((Get-TurnTileSub $t[3]),$tfSub,(New-Object System.Drawing.SolidBrush($pal.Sub)),(New-Object System.Drawing.RectangleF(($r.X+59),($r.Y+28),($tw-62),20)),$sfL)
     }
     $cc=[System.Drawing.Color]::FromName($v.Color); $cr=New-Object System.Drawing.RectangleF((($W-$gap)/2),$top,$gap,($th/2+4))
     $g.DrawString($v.Caption,$tfCap,(New-Object System.Drawing.SolidBrush($cc)),$cr,$sf)
@@ -187,7 +183,7 @@ $pnlTurn.Add_Paint({ param($s,$e)
       $k=$script:turnPhase % 3; $parts=$dir -split '  '
       $x0=($W-$gap)/2; $step=$gap/4
       for($i=0;$i -lt 3;$i++){ $j= if($v.A -eq 'active'){ $i } else { 2-$i }; $a= if($j -eq $k){255}else{90}
-        $g.DrawString($parts[$i],$tfChev,(New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($a,34,139,34))),(New-Object System.Drawing.RectangleF(($x0+$step*($i+0.5)),($top+$th/2-2),$step,30)),$sf) }
+        $g.DrawString($parts[$i],$tfChev,(New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($a,34,139,34))),(New-Object System.Drawing.RectangleF(($x0+$step*($i+0.5)),($top+$th/2-4),$step,28)),$sf) }
     }
     $g.DrawLine((New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(228,228,232))),0,($s.ClientSize.Height-1),$W,($s.ClientSize.Height-1))
   }catch{}

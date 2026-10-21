@@ -38,4 +38,11 @@ Describe 'Item41 Чей ход' -Tag 'Item41' {
     [int]([regex]::Match($src,'turnTimer\.Interval=(\d+)').Groups[1].Value) | Should -BeIn (150..300)
     $src | Should -Match 'Controls\.Add\(\$pnlTurn\)'
   }
+  It 'компактные плитки без треугольника ▼ (пункт 49)' {
+    $src=Get-Content (Join-Path $script:V2Root 'GGskript_gui.ps1') -Raw -Encoding UTF8
+    $src | Should -Not -Match '▼'; $src | Should -Not -Match '\$bob'
+    [int]([regex]::Match($src,'pnlTurn\.Height=(\d+)').Groups[1].Value) | Should -BeLessOrEqual 80
+    [int]([regex]::Match($src,'\$th=(\d+)').Groups[1].Value) | Should -BeIn (50..56)
+    $src | Should -Match 'Ход'; $src | Should -Match "◀  ◀  ◀"
+  }
 }
