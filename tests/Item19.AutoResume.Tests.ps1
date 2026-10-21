@@ -1,6 +1,6 @@
 ﻿BeforeAll {
   . (Join-Path $PSScriptRoot '_Load.ps1')
-  $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
+  $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg; $Cfg.GeminiWebThreshold=90; $Cfg.AgThreshold=10   # прежние пороги — проверка механики
   function D([string]$s){ [datetime]::ParseExact($s,'yyyy-MM-dd HH:mm',[Globalization.CultureInfo]::InvariantCulture) }
   function GQ($cur,$curAt,$wk=10,$wkAt=$null,[string]$curTxt='',[string]$wkTxt=''){ @{ time='18:20'; gweb=@{ cur=$cur; curReset=$curTxt; curResetAt=$curAt; wk=$wk; wkReset=$wkTxt; wkResetAt=$wkAt } } }
 }

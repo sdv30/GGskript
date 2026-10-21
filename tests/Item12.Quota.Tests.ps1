@@ -1,6 +1,6 @@
 ﻿BeforeAll {
   . (Join-Path $PSScriptRoot '_Load.ps1')
-  $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
+  $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg; $Cfg.GeminiWebThreshold=90; $Cfg.AgThreshold=10   # прежние пороги — проверка механики
   function New-AgResp($buckets){ [pscustomobject]@{ response=[pscustomobject]@{ groups=@([pscustomobject]@{ displayName='Gemini Models'; buckets=$buckets }) } } }
 }
 Describe 'Пункт 12: ConvertFrom-UsageText (страница лимитов Gemini)' -Tag Item12 {

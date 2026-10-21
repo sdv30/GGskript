@@ -81,11 +81,11 @@ function Get-DefaultSettings{
     # ошибка, нужна помощь (3 коротких); off — без звуков; all — ещё 1 короткий высокий после передачи ответа в Antigravity.
     Sounds               = 'important'
     SoundRepeatMin       = 10          # один и тот же звук — не чаще раза в N мин
-    GeminiWebThreshold   = 90
+    GeminiWebThreshold   = 100         # стоп только при полном исчерпании (100% использовано)
     GeminiWebThresholdIs = 'used'
     AgCheck              = $true
     AgGroup              = 'Gemini Models'
-    AgThreshold          = 10
+    AgThreshold          = 0           # стоп только когда осталось 0%
     AgThresholdIs        = 'remaining'
     QuotaReWarnStep      = 5
     AutoResume           = $true    # после сброса лимита (время со страницы лимитов / Antigravity) перепроверить, вернуть модель ModelMustContain и продолжить
