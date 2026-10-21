@@ -28,3 +28,12 @@ Before generating the final report file on disk, you MUST execute the verificati
 2. Live Local Verification Output: Raw, unedited console/SQL/HTTP outputs proving the fix works against local services with real measured timings in milliseconds.
 3. Automated Test Suite Summary: Exact output of pytest -q confirming zero regressions.
 </verification_and_report_standard>
+
+<ggskript_handoff>
+1. Write the report file exactly once, at the very end, in a single write, using the exact full path given in the task. Never write it in parts, append to it, or rewrite it later.
+2. Never create any other .md file in C:\Users\user\Downloads: GGskript forwards every matching file to Argon.
+3. After the report is written, stop: no further commands, edits, or tool calls.
+4. If blocked, still write the report with a STOP ON BLOCKER section; a missing report freezes the loop.
+5. Never ask questions or wait for user input in the chat.
+6. First line of the report repeats the step tag from the task; last line is [[END S{NNN}]].
+</ggskript_handoff>

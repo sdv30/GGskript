@@ -51,8 +51,8 @@ function Format-GuiLimits($j){
   if($j.quotaTime){ "Лимиты ($($j.quotaTime)) — $g | $a" } else { "Лимиты: $g | $a" }
 }
 function Get-GuiStateView($j){
-  $tag= switch([string]$j.kind){ 'running'{'работает'} 'paused'{'⏸ Остановлен — ничего не делаю'} 'limit'{'ОСТАНОВЛЕНО (лимит/модель)'} 'stopped'{'остановлен'} default{[string]$j.kind} }
-  $color= switch([string]$j.kind){ 'running'{'ForestGreen'} 'paused'{'DarkOrange'} 'limit'{'Firebrick'} 'stopped'{'DimGray'} default{'Black'} }
+  $tag= switch([string]$j.kind){ 'running'{'работает'} 'paused'{'⏸ Остановлен — ничего не делаю'} 'limit'{'ОСТАНОВЛЕНО (лимит/модель)'} 'operator'{'✋ ждёт решения оператора'} 'stopped'{'остановлен'} default{[string]$j.kind} }
+  $color= switch([string]$j.kind){ 'running'{'ForestGreen'} 'paused'{'DarkOrange'} 'limit'{'Firebrick'} 'operator'{'Firebrick'} 'stopped'{'DimGray'} default{'Black'} }
   $pend= if($j.pending -and @($j.pending).Count){ (@($j.pending) -join '; ') } else { 'нет' }
   @{ State="Состояние: $tag — $($j.state)"; Color=$color
      Model="Модель Gemini: $(if($j.model){$j.model}else{'—'})$(if($j.limitStop){ ' | лимит: '+$j.limitModel })$(if($j.resumeAt){ ' | жду сброса в '+$j.resumeAt })"
@@ -109,6 +109,7 @@ function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true){
     'gemini'      { @{ Caption='Ход Gemini';       G='active'; A='wait'; Anim=$true;  Color='ForestGreen' } }
     'antigravity' { @{ Caption='Ход Antigravity';  G='wait'; A='active'; Anim=$true;  Color='ForestGreen' } }
     'stopped'     { @{ Caption='⏸ Остановлен';     G='off';  A='off';    Anim=$false; Color='DimGray' } }
+    'operator'    { @{ Caption='✋ Ждём оператора'; G='wait'; A='wait';   Anim=$false; Color='Firebrick' } }   # пункт 44: «СТОП — РЕШЕНИЕ ОПЕРАТОРА»
     'limit'       { @{ Caption='⛔ Лимит Gemini';   G='limit';A='off';    Anim=$false; Color='DarkOrange' } }
     'off'         { @{ Caption='Скрипт не запущен'; G='off';  A='off';    Anim=$false; Color='DimGray' } }
     default       { @{ Caption='Ожидание работы';  G='wait'; A='wait';   Anim=$false; Color='DimGray' } }

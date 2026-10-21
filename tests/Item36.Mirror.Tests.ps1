@@ -1,7 +1,7 @@
 ﻿BeforeAll {
   . (Join-Path $PSScriptRoot '_Load.ps1')
   $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
-  $script:Ans="[ARGON>FLASH] [Arena] [S004] [REWORK S003] [2026-10-20]`nСделай следующее: переработай модуль арены и добавь проверки."
+  $script:Ans="[ARGON>FLASH] [Arena] [S004] [REWORK S003] [2026-10-20]`nСделай следующее: переработай модуль арены и добавь проверки.`n[[END S004]]"  # пункт 44: метка конца обязательна при заголовке [ARGON>FLASH]
 }
 Describe 'Пункт 36: наблюдатель-зеркало Gemini -> Antigravity' -Tag Item36 {
   BeforeEach {

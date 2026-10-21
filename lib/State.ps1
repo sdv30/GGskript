@@ -34,11 +34,12 @@ function Read-JsonWithBackup{
 }
 
 # ---------- Этапы и переходы ----------
-$script:TerminalStages=@('relayed','nocode','done','abandoned','skipped')
+$script:TerminalStages=@('relayed','nocode','done','abandoned','skipped','operator')
 $script:StageTransitions=@{
   ''          = @('sent','resend','done','abandoned','nocode')
   'resend'    = @('sent','done','abandoned')
-  'sent'      = @('answered','resend','nocode','stale','relayed','done')
+  'sent'      = @('answered','resend','nocode','stale','relayed','done','operator')
+  'operator'  = @('resend','relayed','done')   # пункт 44: «СТОП — РЕШЕНИЕ ОПЕРАТОРА» — ждём оператора
   'answered'  = @('relayed','resend','stale','done')
   'stale'     = @('relayed','resend','done','abandoned')
   'nocode'    = @('resend')
@@ -48,7 +49,7 @@ $script:StageTransitions=@{
   'done'      = @()
 }
 function Get-StageRu([string]$Stage){
-  switch($Stage){ 'sent'{'отправлен в Gemini, ждёт ответа'} 'answered'{'ответ скопирован, в Antigravity не подтверждён'} 'relayed'{'ответ передан в Antigravity'} 'nocode'{'нет блока Markdown (пропущен)'} 'resend'{'нужно отправить в Gemini заново'} 'stale'{'ответ совпал со старым — ждёт решения («передай всё равно» / «отправь заново»)'} 'done'{'обработан (до учёта этапов)'} 'abandoned'{'старый проект — пропущен (не отправлялся заново)'} 'skipped'{'пропущен при запуске (сделан вручную или устарел) — не отправлялся'} default{'новый'} }
+  switch($Stage){ 'sent'{'отправлен в Gemini, ждёт ответа'} 'answered'{'ответ скопирован, в Antigravity не подтверждён'} 'relayed'{'ответ передан в Antigravity'} 'nocode'{'нет блока Markdown (пропущен)'} 'operator'{'СТОП — ждёт решения оператора («Напиши» / «Отправь заново»)'} 'resend'{'нужно отправить в Gemini заново'} 'stale'{'ответ совпал со старым — ждёт решения («передай всё равно» / «отправь заново»)'} 'done'{'обработан (до учёта этапов)'} 'abandoned'{'старый проект — пропущен (не отправлялся заново)'} 'skipped'{'пропущен при запуске (сделан вручную или устарел) — не отправлялся'} default{'новый'} }
 }
 function Test-StageTransition([string]$From,[string]$To){ if($null -eq $From){ $From='' }; ($script:StageTransitions.ContainsKey($From) -and (@($script:StageTransitions[$From]) -contains $To)) }
 
@@ -83,7 +84,7 @@ function Read-RelayState([string]$Path){
   if($r.Data.lastAgAt){ $s.lastAgAt=[string]$r.Data.lastAgAt }
   if($r.Data.activeProject){ $s.activeProject=[string]$r.Data.activeProject }
   if($r.Data.lastSide){ $s.lastSide=[string]$r.Data.lastSide }
-  if($r.Data.lastBlock){ $b=$r.Data.lastBlock; $s.lastBlock=[ordered]@{ project=[string]$b.project; step=[int]$b.step; hash=[string]$b.hash; at=[string]$b.at } }
+  if($r.Data.lastBlock){ $b=$r.Data.lastBlock; $s.lastBlock=[ordered]@{ project=[string]$b.project; step=[int]$b.step; hash=[string]$b.hash; at=[string]$b.at; rework=[bool]$b.rework } }
   if($r.Data.sent){ $s.sent=@($r.Data.sent | ForEach-Object { [string]$_ }) }
   [pscustomobject]@{ State=$s; Source=$r.Source; Error=$r.Error }
 }
@@ -136,7 +137,7 @@ function Test-ReportNewerThanAg($State,[datetime]$FileTime,[int]$GraceSec=3){
 # Файл, уже обработанный (relayed/done/nocode), перезаписан ПОСЛЕ своего этапа — это новый отчёт под тем же именем.
 function Test-ReportRewritten($State,[string]$Name,[datetime]$FileTime,[int]$GraceSec=5){
   if(-not $State.files.Contains($Name)){ return $false }
-  $v=$State.files[$Name]; if([string]$v.stage -notin @('relayed','done','nocode')){ return $false }
+  $v=$State.files[$Name]; if([string]$v.stage -notin @('relayed','done','nocode','operator')){ return $false }
   $t=ConvertTo-StageTime ([string]$v.time); if(-not $t){ return $false }
   ($FileTime -gt $t.AddSeconds($GraceSec))
 }
@@ -150,6 +151,7 @@ function Get-TurnSideOfStage([string]$Stage,[string]$Prev){
 function Get-RelayTurn([string]$Kind,[string[]]$Stages=@(),[string]$NextFile='',[string]$LastSide='',[bool]$AgWatch=$false,[string]$Decision=''){
   if($Kind -in 'paused','stopped'){ return 'stopped' }
   if($Kind -eq 'limit'){ return 'limit' }
+  if($Kind -eq 'operator' -or $Decision -eq 'operator'){ return 'operator' }   # пункт 44: Argon остановился — ждём оператора
   if($Decision -in 'gemini','antigravity'){ return $Decision }   # пункт 43: решение по номеру шага и проекту
   if(@($Stages | Where-Object { $_ -in 'sent','resend','stale' }).Count){ return 'gemini' }      # отчёт в Gemini, ждём ответ
   if(@($Stages | Where-Object { $_ -eq 'answered' }).Count){ return 'antigravity' }             # ответ получен, идёт в Antigravity
@@ -170,10 +172,12 @@ function Get-ReportFileTime($f){
 function Get-PromptHeader([string]$Text){
   $t=([string]$Text) -replace '&gt;','>' -replace '&lt;','<' -replace '&amp;','&'
   $head=(@($t -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 3) -join ' ')
-  $m=[regex]::Match($head,'\[(?<project>[^\[\]>]+)\]\s*\[\s*(?:REWORK\s*)?S(?<n>\d{1,4})\s*\]')
+  $m=[regex]::Match($head,'\[(?<project>[^\[\]>]+)\]\s*\[\s*(?<rw>REWORK\s*)?S(?<n>\d{1,4})\s*\]')
   if(-not $m.Success){ return $null }
   $pr=$m.Groups['project'].Value.Trim(); if(-not $pr -or $pr -match '\s{2,}'){ return $null }
-  @{ project=$pr; step=[int]$m.Groups['n'].Value }
+  # пункт 44: «[S004] [REWORK S003]» — новый шаг 4, переделка по отчёту 003 (reworkOf); «[REWORK S007]» вместо шага — переделка шага 7 (rework=$true)
+  $ro=[regex]::Match($head,'\[\s*REWORK\s*S0*(\d{1,4})\s*\]')
+  @{ project=$pr; step=[int]$m.Groups['n'].Value; rework=[bool]$m.Groups['rw'].Success; reworkOf=$(if($ro.Success){ [int]$ro.Groups[1].Value } else { -1 }) }
 }
 # Кандидаты-отчёты: только проект $Project (если задан), не старше MaxAgeHours (если > 0); сортировка по времени файла, затем по номеру.
 function Get-ReportCandidates{
@@ -219,6 +223,14 @@ function Get-TurnDecision{
     $o.project=$Header.project; $o.step=[int]$Header.step; $N=$o.step
     if($Report -and $Report.Project -ne $Header.project){ $Report=$null; $o.report=''; $o.num=-1; $repSent=$false; $repNew=$false }
     $M= if($Report){ $o.num } else { -1 }
+    if($Header.rework -and $N -eq $M){
+      # пункт 44: [REWORK S<N>] — переделка шага N, отчёт №N уже есть. Блок передаю один раз (по хэшу), потом жду перезаписанный/новый отчёт №N.
+      $repSentH= ($ReportHash) -and (Test-SentRecord $State 'gem' '' -1 $ReportHash)
+      if($BlockHash -and -not $blockSent){ $o.turn='antigravity'; $o.action='relay-block'; $o.reason="переделка S$N (REWORK) — передать в Antigravity"; return $o }
+      if($repNew -and -not $repSentH){ $o.turn='gemini'; $o.action='send-report'; $o.reason="переделанный отчёт №$N новее последней вставки — прикрепить в Gemini"; return $o }
+      if($repNew -and $repSentH){ $o.turn='gemini'; $o.action='wait-answer'; $o.reason="переделанный отчёт №$N уже в Gemini — жду ответ"; return $o }
+      $o.turn='antigravity'; $o.action='wait-report'; $o.reason="REWORK S$N у Antigravity — жду новый отчёт №$N"; return $o
+    }
     if($N -gt $M){
       $o.turn='antigravity'
       if($BlockHash -and -not $blockSent -and -not (Test-SentRecord $State 'ag' $o.project $N)){ $o.action='relay-block'; $o.reason="блок S$N новее отчёта $(if($M -ge 0){"№$M"}else{'(отчётов нет)'}) — передать в Antigravity" }
@@ -240,5 +252,46 @@ function Get-TurnDecision{
   elseif($last -eq 'gem'){ if($canRelay){ $o.turn='antigravity'; $o.action='relay-block'; $o.reason='без номера: последним ушёл отчёт в Gemini, есть новый блок' } else { $o.turn='gemini'; $o.action='wait-answer'; $o.reason='без номера: последним ушёл отчёт в Gemini — жду блок' } }
   elseif($canSend){ $o.turn='gemini'; $o.action='send-report'; $o.reason='без номера: новый отчёт' }
   elseif($canRelay){ $o.turn='antigravity'; $o.action='relay-block'; $o.reason='без номера: новый блок' }
+  $o
+}
+
+# ---------- Пункт 44: «СТОП — РЕШЕНИЕ ОПЕРАТОРА», «Ответ на: <отчёт>.md», проверка меток шага (чистые функции) ----------
+# Первая непустая строка «Ответ на: <имя>.md» (вне блока) -> имя отчёта или $null.
+function Get-AnswerReportRef([string]$Text){
+  $l=@(([string]$Text) -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -First 1
+  if(-not $l){ return $null }
+  $m=[regex]::Match(($l -replace '[*#>`]',''),'^\s*Ответ\s+на\s*:\s*(?<n>[^\s:*?"<>|\\/]+\.md)\b',[Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if($m.Success){ $m.Groups['n'].Value } else { $null }
+}
+# Ответ Argon — осознанная остановка: первая строка (после необязательной «Ответ на: …md») начинается с «СТОП — РЕШЕНИЕ ОПЕРАТОРА».
+function Test-OperatorStop([string]$Text){
+  $ls=@(([string]$Text) -split "`r?`n" | ForEach-Object { ($_ -replace '[*#>`]','').Trim() } | Where-Object { $_ })
+  if(-not $ls.Count){ return $false }
+  $i=0; if($ls[0] -match '^(?i)Ответ\s+на\s*:'){ $i=1 }; if($i -ge $ls.Count){ return $false }
+  [bool]($ls[$i] -match '^(?i)(СТОП|STOP)\s*[-–—:]+\s*РЕШЕНИЕ\s+ОПЕРАТОРА')
+}
+# Метки шага в блоке: начало [ARGON>FLASH] [Проект] [S<N>] (+ [REWORK S<N>]), конец [[END S<N>]].
+# $LatestNum — номер последнего отчёта проекта (-1 — нет). -> @{ tagged; ok; reason; project; step; end; rework; expect }
+# Без заголовка [ARGON>FLASH] — tagged=$false, ok=$true (прежнее поведение).
+function Test-BlockStepTags([string]$Code,[int]$LatestNum=-1){
+  $t=([string]$Code) -replace '&gt;','>' -replace '&lt;','<' -replace '&amp;','&'
+  $o=@{ tagged=$false; ok=$true; reason=''; project=''; step=-1; end=-1; rework=$false; reworkOf=-1; expect=-1 }
+  $ls=@($t -split "`r?`n" | Where-Object { $_.Trim() })
+  if(-not $ls.Count -or $ls[0] -notmatch '\[\s*ARGON\s*>\s*FLASH\s*\]'){ return $o }
+  $h=Get-PromptHeader $t; if(-not $h){ return $o }
+  $o.tagged=$true; $o.project=$h.project; $o.step=[int]$h.step; $o.rework=[bool]$h.rework
+  $em=[regex]::Matches($t,'\[\[\s*END\s+S0*(\d{1,4})\s*\]\]')
+  $last=$ls[$ls.Count-1]; $lm=[regex]::Match($last,'\[\[\s*END\s+S0*(\d{1,4})\s*\]\]\s*$')
+  $r=@()
+  if(-not $lm.Success){ $r+= if($em.Count){ "метка конца [[END S$('{0:D3}' -f [int]$em[$em.Count-1].Groups[1].Value)]] не в последней строке (блок обрезан?)" } else { 'нет метки конца [[END S…]] (блок обрезан?)' } }
+  else{ $o.end=[int]$lm.Groups[1].Value; if($o.end -ne $o.step){ $r+="начало S$('{0:D3}' -f $o.step), а конец [[END S$('{0:D3}' -f $o.end)]]" } }
+  $o.reworkOf=[int]$h.reworkOf
+  if($LatestNum -ge 0){
+    # обычный шаг и «[S<N>] [REWORK S<K>]»: N = последний отчёт + 1, K = последний отчёт; «[REWORK S<N>]» вместо шага: N = последний отчёт
+    $o.expect= if($o.rework){ $LatestNum } else { $LatestNum+1 }
+    if($o.step -ne $o.expect){ $r+= if($o.rework){ "REWORK S$('{0:D3}' -f $o.step), а последний отчёт $($o.project) — №$('{0:D3}' -f $LatestNum) (переделка должна ссылаться на него)" } else { "шаг S$('{0:D3}' -f $o.step), а последний отчёт $($o.project) — №$('{0:D3}' -f $LatestNum) (ожидался S$('{0:D3}' -f $o.expect))" } }
+    if(-not $o.rework -and $o.reworkOf -ge 0 -and $o.reworkOf -ne $LatestNum){ $r+="REWORK S$('{0:D3}' -f $o.reworkOf), а последний отчёт $($o.project) — №$('{0:D3}' -f $LatestNum)" }
+  }
+  if($r.Count){ $o.ok=$false; $o.reason=($r -join '; ') }
   $o
 }

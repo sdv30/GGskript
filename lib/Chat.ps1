@@ -15,6 +15,8 @@ $script:PromptYesNo=@{
   newest =@{ confirm='send'; cancel='wait' }
   exit   =@{ confirm='yes'; cancel='no' }
   proto  =@{ confirm='relay'; cancel='norelay' }
+  gate   =@{ confirm='force' }   # пункт 44
+  operator=@{}
 }
 
 # ---------- Сохранённые полные ответы ----------
@@ -116,6 +118,8 @@ function Invoke-PromptChoice($p,[string]$Choice){
         'no'   { Tg-Send 'Ок, в Antigravity не пересылаю.' | Out-Null }
       }
     }
+    'gate'     { if($Choice -eq 'force'){ Queue-ChatAction @{ k='force' } } elseif($Choice -eq 'resend'){ Queue-ChatAction @{ k='resendstale' } } }   # пункт 44
+    'operator' { if($Choice -eq 'write'){ Start-AwaitText -Target 'gemini' } elseif($Choice -eq 'resend'){ Queue-ChatAction @{ k='resendstale' } } }
     'shutdown' { if($Choice -eq 'yes'){ Confirm-Shutdown $d } else { Tg-Send 'Ок, компьютер не выключаю.' | Out-Null } }
     'newest'   { Resolve-NewestChoice $d.name $Choice }
     'exit'     { if($Choice -eq 'yes'){ Log 'Выключение скрипта (подтверждено в Telegram)'; Tg-Send 'Выключаю GGskript. Запустить снова — ярлыком GGskript на ПК.' | Out-Null; $script:StopReq=$true } else { Tg-Send 'Ок, GGskript не выключаю.' | Out-Null } }
