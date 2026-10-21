@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
   . (Join-Path $PSScriptRoot '_Load.ps1')
   $script:Cfg=New-TestCfg $TestDrive; $Cfg=$script:Cfg
 }

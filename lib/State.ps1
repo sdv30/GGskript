@@ -148,9 +148,13 @@ function Get-TurnSideOfStage([string]$Stage,[string]$Prev){
   switch($Stage){ {$_ -in 'sent','resend','stale'}{ 'gemini' } {$_ -in 'answered','relayed'}{ 'antigravity' } default{ $Prev } }
 }
 # Чей ход сейчас: stopped | limit | gemini | antigravity | idle. Чистая функция (тесты Item41).
-function Get-RelayTurn([string]$Kind,[string[]]$Stages=@(),[string]$NextFile='',[string]$LastSide='',[bool]$AgWatch=$false,[string]$Decision=''){
+function Get-RelayTurn([string]$Kind,[string[]]$Stages=@(),[string]$NextFile='',[string]$LastSide='',[bool]$AgWatch=$false,[string]$Decision='',[string]$LimitSide=''){
   if($Kind -in 'paused','stopped'){ return 'stopped' }
-  if($Kind -eq 'limit'){ return 'limit' }
+  if($Kind -eq 'limit'){
+    # пункт 46: лимит одной стороны — ход другой стороны, если у неё есть работа
+    if($LimitSide -eq 'gemini' -and ($Decision -eq 'antigravity' -or @($Stages | Where-Object { $_ -eq 'answered' }).Count)){ return 'antigravity' }
+    if($LimitSide -eq 'antigravity' -and ($Decision -eq 'gemini' -or $NextFile -or @($Stages | Where-Object { $_ -in 'sent','resend' }).Count)){ return 'gemini' }
+    return 'limit' }
   if($Kind -eq 'operator' -or $Decision -eq 'operator'){ return 'operator' }   # пункт 44: Argon остановился — ждём оператора
   if($Decision -in 'gemini','antigravity'){ return $Decision }   # пункт 43: решение по номеру шага и проекту
   if(@($Stages | Where-Object { $_ -in 'sent','resend','stale' }).Count){ return 'gemini' }      # отчёт в Gemini, ждём ответ

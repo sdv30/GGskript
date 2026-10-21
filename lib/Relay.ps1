@@ -114,6 +114,17 @@ function Get-LatestReportNum([string]$Project){
   $r=@(Get-ReportCandidates -Files @(Get-ChildItem -LiteralPath $Cfg.Downloads -File -Filter '*.md' -EA 0) -Project $Project -Pattern $Cfg.Pattern) | Select-Object -Last 1
   if($r){ [int]$r.Num } else { -1 }
 }
+# Пункт 46: блок дописан при не-Argon модели (лимит) — чей он? Метки [ARGON>FLASH]…[[END S<N>]] верны -> Argon (передать);
+# метки есть, но неверны -> нет (гейт); меток нет -> передать, но с записью в лог.
+function Test-BlockFromArgon([string]$Code,[bool]$ArgonNow,$Gate){
+  if($ArgonNow){ return @{ ok=$true; why='модель Argon' } }
+  if(-not $Gate){ $Gate=@{ tagged=$false; ok=$true } }
+  $argTag=([string]$Code -replace '&gt;','>') -match '\[ARGON>FLASH\]'
+  if($Gate.tagged -and $Gate.ok -and $argTag){ return @{ ok=$true; why='метки [ARGON>FLASH] и [[END S…]] совпадают — блок дописан Argon до переключения' } }
+  if($Gate.tagged -and $Gate.ok){ return @{ ok=$true; why='метки шага и [[END S…]] совпадают (нет [ARGON>FLASH])' } }
+  if($Gate.tagged){ return @{ ok=$false; why="метки не сходятся: $($Gate.reason)" } }
+  @{ ok=$true; why='меток нет — не могу проверить, что блок от Argon; передаю (формат промпта нарушен)' }
+}
 function Get-BlockGate([string]$Code){
   $h=Get-PromptHeader $Code; $pr= if($h){ $h.project } else { '' }
   Test-BlockStepTags $Code (Get-LatestReportNum $pr)
@@ -342,6 +353,7 @@ function Ag-HasText([string]$Text){
 
 # ---------- Передача ----------
 function Relay-ToAg([string]$n,[string]$ans,[string]$hh,[string]$m2,[string]$how='',[switch]$NoGate){
+  Assert-Quota -Ag   # пункт 46: лимит Antigravity блокирует только передачу В Antigravity (ответ остаётся «получен» в кэше)
   if(-not $NoGate){ $g=Get-BlockGate $ans; if($g.tagged -and -not $g.ok){ Set-Stage $n 'stale' $hh -Force; $script:StaleNotified[$n]=1; Notify-BlockGate $g $hh $n; return } }
   Ag-Send -Text $ans -Label "ответ на $n" -Name $n
   Register-BlockRelayed $ans $hh
@@ -394,7 +406,7 @@ function Process-File($next){
   $n=$next.Name; $st=Get-Stage $n
   if($st -eq 'operator'){ $script:State="🛑 $($n): Argon ждёт решения оператора («Напиши» / «Отправь заново»)"; return }
   if($st -eq 'stale'){ $script:State="$($n): ждёт решения по повторному ответу («передай всё равно» / «отправь заново»)"; return }
-  if($st -eq 'answered'){ $script:State="передаю уже полученный ответ на $n"; Finish-Answered $n; return }
+  if($st -eq 'answered'){ if($script:QStopA){ $script:State="ответ на $n получен — передам в Antigravity после сброса его лимита"; return }; $script:State="передаю уже полученный ответ на $n"; Finish-Answered $n; return }
   $ctx=$null; $pBefore=-1
   if($st -eq '' -and $Cfg.StartupNewestOnly){
     $nh=Get-NewerHandled $next
@@ -797,7 +809,7 @@ function Invoke-GitCheckpoint{
 function Try-AcceptAll([switch]$Report){
   if($script:Paused){ return $false }
   $h=Ag-GetWindow; if(!$h){ return $false }
-  # пункт 45: в Antigravity «Accept all» — <span> с onClick, не Button: UIA его не видит. С CDP — только DOM (span), агент не должен работать.
+  # пункт 46: в Antigravity «Accept all» — <span> с onClick, не Button: UIA его не видит. С CDP — только DOM (span), агент не должен работать.
   if($Cfg.AgTransport -eq 'cdp'){
     $d=$null; try{ $d=AgCdp-AcceptAll -Dry }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
     if($d){
@@ -913,7 +925,7 @@ function Invoke-AutoAllowTick{
   $script:LastAutoAllow=Get-Date; $script:InAutoAllow=$true
   try{ try{ [void](Try-AutoAllow) }catch{ Log "Автоподтверждение: $($_.Exception.Message)" } } finally { $script:InAutoAllow=$false }
 }
-# пункт 45: автопринятие «Accept all» из Pump (и во время ожидания Gemini) — только через CDP (без фокуса и мыши), только когда агент не работает.
+# пункт 46: автопринятие «Accept all» из Pump (и во время ожидания Gemini) — только через CDP (без фокуса и мыши), только когда агент не работает.
 $script:LastAutoAccept=Get-Date; $script:InAutoAccept=$false
 function Invoke-AutoAcceptTick{
   if(Test-StopNow){ return }
@@ -971,6 +983,7 @@ function Write-Status([switch]$Force){
   try{
     $nf=Next-FileName; $q=$script:Q
     $kind= if($script:Stopped){ 'stopped' } elseif($script:Paused){ 'paused' } elseif($script:LimitStop -or (Quota-Blocked)){ 'limit' } elseif($script:OperatorWait){ 'operator' } else { 'running' }
+    $limSide= if($script:QStopA -and -not ($script:LimitStop -or $script:QStopG)){ 'antigravity' } elseif($script:QStopA){ 'both' } elseif($kind -eq 'limit'){ 'gemini' } else { '' }
     $o=[ordered]@{
       ts=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); pid=$PID; version=2
       state=[string]$script:State; kind=$kind; paused=[bool]$script:Paused
@@ -988,7 +1001,8 @@ function Write-Status([switch]$Force){
       gwebCurReset= if($q -and $q.gweb){ [string]$q.gweb.curReset } else { '' }; gwebWkReset= if($q -and $q.gweb){ [string]$q.gweb.wkReset } else { '' }
       agH5= if($q -and $q.ag -and $q.ag.h5){ $q.ag.h5.rem } else { $null }; agH5Reset= if($q -and $q.ag -and $q.ag.h5){ [string]$q.ag.h5.reset } else { '' }
       agWk= if($q -and $q.ag -and $q.ag.wk){ $q.ag.wk.rem } else { $null }; agWkReset= if($q -and $q.ag -and $q.ag.wk){ [string]$q.ag.wk.reset } else { '' }
-      turn=[string](Get-RelayTurn -Kind $kind -Stages @($script:St.files.Keys | ForEach-Object { Get-Stage $_ }) -NextFile ([string]$nf) -LastSide ([string]$script:TurnSide) -AgWatch ([bool]$script:AgWatch) -Decision $(try{ [string](Get-TurnDecisionNow).turn }catch{ '' }))
+      turn=[string](Get-RelayTurn -Kind $kind -Stages @($script:St.files.Keys | ForEach-Object { Get-Stage $_ }) -NextFile ([string]$nf) -LastSide ([string]$script:TurnSide) -AgWatch ([bool]$script:AgWatch) -Decision $(try{ [string](Get-TurnDecisionNow).turn }catch{ '' }) -LimitSide $limSide)
+      limitSide=$limSide
     }
     Write-AtomicText -Path $Cfg.StatusFile -Text ($o | ConvertTo-Json -Depth 5) -NoBackup
   }catch{}
@@ -1029,6 +1043,18 @@ function Start-Procedure([switch]$DryRun){
     $rep+="2) Лимиты: $((Quota-Text) -replace "`n",'; ')"
   }
   $qb= if($DryRun){ '' } else { Quota-Blocked }
+  if($qb -and $script:QStopG -and -not $script:QStopA -and $Cfg.MirrorRelay){
+    # пункт 46: Gemini исчерпан, но дописанный блок Argon в Antigravity передам (наблюдатель)
+    Update-AutoPlan -Quiet
+    $rep+="   ⛔ исчерпан: $qb — в Gemini ничего не отправляю; готовый блок Argon (если не передан) передам в Antigravity"
+    $rep+='👉 Ход: Antigravity, если в Gemini есть непереданный блок; иначе жду сброса лимита Gemini'
+    Send-StartReport $rep -DryRun:$DryRun; return $true
+  }
+  if($qb -and $script:QStopA -and -not $script:QStopG){
+    Update-AutoPlan -Quiet
+    $rep+="   ⛔ исчерпан: $qb — в Antigravity ничего не вставляю; готовые отчёты в Gemini отправлять буду"
+    $qb=''
+  }
   if($qb){
     Update-AutoPlan -Quiet
     $rep+="   ⛔ исчерпан: $qb — ничего не отправляю$(if($script:AutoPlan -and $Cfg.AutoResume){"; проверю снова в $(Format-PlanTime $script:AutoPlan.at) и продолжу сам"})"
@@ -1042,11 +1068,11 @@ function Start-Procedure([switch]$DryRun){
     if($Cfg.AutoSwitchModel -and -not $DryRun){
       $old=$m
       try{ $m=Switch-ToArgon; $rep+="3) Модель Gemini: была «$old» — переключил на «$m»" }
-      catch{ $rep+="3) Модель Gemini: «$old» — НЕ $($Cfg.ModelMustContain), переключить не удалось ($($_.Exception.Message))"; Enter-LimitStop $old 'Обнаружено при запуске.'; $rep+='👉 Ход: ничей — жду нужную модель'; Send-StartReport $rep; return $true }
+      catch{ $rep+="3) Модель Gemini: «$old» — НЕ $($Cfg.ModelMustContain), переключить не удалось ($($_.Exception.Message))"; Enter-LimitStop $old 'Обнаружено при запуске.'; $rep+='👉 Ход: Antigravity, если в Gemini есть дописанный непереданный блок Argon (передам); иначе жду нужную модель'; Send-StartReport $rep; return $true }
     } else {
       $rep+="3) Модель Gemini: «$m» — НЕ $($Cfg.ModelMustContain)$(if(-not $DryRun){', передачу останавливаю'})"
       if(-not $DryRun){ Enter-LimitStop $m 'Обнаружено при запуске.' }
-      $rep+='👉 Ход: ничей — жду нужную модель'; Send-StartReport $rep -DryRun:$DryRun; return $true
+      $rep+='👉 Ход: Antigravity, если в Gemini есть дописанный непереданный блок Argon (передам); иначе жду нужную модель'; Send-StartReport $rep -DryRun:$DryRun; return $true
     }
   } else { $rep+="3) Модель Gemini: $m ✅" }
   $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{}
@@ -1422,7 +1448,8 @@ function Test-AnswerRefersTo([string]$Answer,[string]$Name){
 # Отчёт, к которому отнести ответ: самый новый файл, ещё не «relayed» (пропущен/отправлен вручную/в работе).
 function Get-MirrorTarget{ $f=Get-NewestFile @(Get-Files -All); if($f -and (Get-Stage $f.Name) -ne 'relayed'){ $f.Name } else { $null } }
 function Invoke-MirrorGemini([switch]$Force){
-  if(-not $Cfg.MirrorRelay -or $script:Paused -or $script:LimitStop -or (Quota-Blocked)){ return $false }
+  # пункт 46: лимит Gemini / не-Argon блокирует только отправку В Gemini; дописанный блок Argon в Antigravity передаю. Блокирует лишь лимит Antigravity.
+  if(-not $Cfg.MirrorRelay -or $script:Paused -or $script:QStopA){ return $false }
   if(-not $Force -and $script:LastMirror -and ((Get-Date)-$script:LastMirror).TotalSeconds -lt $Cfg.MirrorEverySec){ return $false }
   $script:LastMirror=Get-Date
   if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return $false }
@@ -1440,8 +1467,14 @@ function Invoke-MirrorGemini([switch]$Force){
   }
   # два одинаковых чтения подряд — ответ дописан и стабилен
   if($script:MirrorSeen -ne $peekKey){ $script:MirrorSeen=$peekKey; return $false }
-  $m2=Get-ModelNow; if(-not (Is-Argon $m2)){ return $false }
+  $m2=$null; try{ $m2=Get-ModelNow }catch{}
+  $argNow=[bool]($m2 -and (Is-Argon $m2))
   $ans=Gem-CopyCode; if(-not $ans){ return $false }
+  if(-not $argNow){
+    $ok=Test-BlockFromArgon -Code $ans -ArgonNow $false -Gate (Get-BlockGate $ans)
+    if(-not $ok.ok){ $script:MirrorSeen=$null; return $false }
+    Log "🔭 Наблюдатель: модель сейчас «$m2» (лимит), но блок уже дописан — $($ok.why); передаю в Antigravity"
+  }
   $hh=Get-Hash8 $ans
   if(Test-RelayHash $script:St $hh){ $script:MirrorSeen=$null; return $false }
   $n=Get-MirrorTarget
@@ -1501,6 +1534,16 @@ function Invoke-MainStep{
       }
     }
     elseif($qb){ $script:State="⛔ остановлено по лимиту: $qb$(if($wait){$wait}else{" (проверка раз в $($Cfg.QuotaEveryMin) мин)"})" }
+    # пункт 46: лимит одной стороны блокирует только передачу В эту сторону
+    $gemBlk=[bool]($script:LimitStop -or $script:QStopG); $agBlk=[bool]$script:QStopA
+    if($gemBlk -and -not $agBlk -and $Cfg.MirrorRelay){
+      $script:Busy=$true; try{ if(Invoke-MirrorGemini){ return 'continue' } }catch{ if((Get-ErrorKind $_) -eq 'stop'){ throw }; Log "Наблюдатель (лимит Gemini): $($_.Exception.Message)" } finally { $script:Busy=$false }
+    }
+    elseif($agBlk -and -not $gemBlk){
+      $next=Next-File
+      if($next -and (Get-Stage $next.Name) -ne 'answered'){ $script:Busy=$true; try{ Process-File $next } finally { $script:Busy=$false } }
+    }
+    if($script:LimitStop -or $qb){}
     else{
       $script:State='слежу за папкой Downloads, жду новый отчёт'
       $next=Next-File

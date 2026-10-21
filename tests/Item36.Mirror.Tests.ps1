@@ -28,12 +28,12 @@ Describe 'Пункт 36: наблюдатель-зеркало Gemini -> Antigra
     Mock Ag-HasText { $true }; 1..2 | ForEach-Object { [void](Invoke-MirrorGemini -Force) }
     $script:AgSent | Should -Be 0; Test-RelayHash $script:St (Get-Hash8 $script:Ans) | Should -BeTrue
   }
-  It 'Gemini генерирует / нет блока / СТОП / не Argon — ничего не делает' {
+  It 'Gemini генерирует / нет блока / СТОП / лимит Antigravity — ничего не делает' {
     Mock Gem-IsGenerating { $true }; 1..2 | ForEach-Object { [void](Invoke-MirrorGemini -Force) }
     Mock Gem-IsGenerating { $false }; Mock Gem-PeekAnswer { @{ answered=$true; md=$false; code=''; labels=@('python') } }; 1..2 | ForEach-Object { [void](Invoke-MirrorGemini -Force) }
     Mock Gem-PeekAnswer { @{ answered=$true; md=$true; code=$script:Ans; labels=@('Markdown') } }
     $script:Paused=$true; 1..2 | ForEach-Object { [void](Invoke-MirrorGemini -Force) }; $script:Paused=$false
-    Mock Get-ModelNow { 'Flash-Lite' }; 1..2 | ForEach-Object { [void](Invoke-MirrorGemini -Force) }
+    $script:QStopA=$true; 1..2 | ForEach-Object { [void](Invoke-MirrorGemini -Force) }; $script:QStopA=$false   # пункт 46: блокирует только лимит Antigravity
     $script:AgSent | Should -Be 0
   }
   It 'ответ дописывается (меняется между чтениями) — ждёт стабильности' {
