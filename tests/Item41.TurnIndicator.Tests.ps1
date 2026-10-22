@@ -40,7 +40,7 @@ Describe 'Item41 Чей ход' -Tag 'Item41' {
   }
   It 'компактные плитки без треугольника ▼ (пункт 49)' {
     $src=Get-Content (Join-Path $script:V2Root 'GGskript_gui.ps1') -Raw -Encoding UTF8
-    $src | Should -Not -Match '▼'; $src | Should -Not -Match '\$bob'
+    ([regex]::Matches($src,'▼')).Count | Should -Be 1; $src | Should -Match "DrawString\('▼',\`$tfSub,"; $src | Should -Not -Match '\$bob'   # пункт 53: единственный ▼ — кнопка выпадающего списка IDE
     [int]([regex]::Match($src,'pnlTurn\.Height=(\d+)').Groups[1].Value) | Should -BeLessOrEqual 80
     [int]([regex]::Match($src,'\$th=(\d+)').Groups[1].Value) | Should -BeIn (50..56)
     $src | Should -Match 'Ход'; $src | Should -Match "◀  ◀  ◀"

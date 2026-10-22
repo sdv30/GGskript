@@ -1048,8 +1048,8 @@ function Start-Procedure([switch]$DryRun){
   $rep=@()
   # 1. Окна
   $gi=$false; try{ $gi=Gem-IsReady }catch{}
-  $ah=Ag-GetWindow; $ai=$false; if($ah){ try{ $ai=[bool](AgUia-FindInput $ah) }catch{} }
-  $rep+="1) Окна: Gemini $(if($gi){'есть (поле ввода найдено)'}else{'НЕТ или нет поля ввода'}), Antigravity $(if($ah){'есть'}else{'НЕТ'}) (поле чата: $(if($ai){'есть'}elseif($Cfg.AgCoordFallback){'не найдено, будет клик по координатам'}else{'НЕ найдено — отправка в Antigravity будет отклоняться'}))"
+  $iw=Get-IdeWindowState; $ah=$iw.present; $ai=$iw.input; $ahH=$iw.h; $ide=Get-IdeName
+  $rep+="1) Окна: Gemini $(if($gi){'есть (поле ввода найдено)'}else{'НЕТ или нет поля ввода'}), $ide $(if($ah){'есть'}else{'НЕТ'}) (поле чата: $(if($ai){'есть'}elseif($Cfg.AgCoordFallback -and -not (Test-IsDsh)){'не найдено, будет клик по координатам'}else{"НЕ найдено — отправка в $ide будет отклоняться"})$(if($iw.note){"; $($iw.note)"}))"
   if(!$gi -or !$ah){
     $rep+="   ⛔ нет нужного окна — лимиты, модель и чаты НЕ проверяю; повторю через $($Cfg.StartRetrySec) сек"
     $rep+='2) Модель Gemini: не проверена (нет окна Gemini)'
@@ -1057,11 +1057,11 @@ function Start-Procedure([switch]$DryRun){
       # пункт 24: старые файлы пропускаются сразу (только учёт, окна не нужны); самый новый — когда будут окна
       $tr=Invoke-StartupTriage $null -DryRun:$DryRun -NoChat; $rep+='4) Файлы:'; $rep+=$tr.lines
     }
-    $rep+='👉 Ход: ничей — жду окна Gemini и Antigravity, ничего не отправляю'
+    $rep+="👉 Ход: ничей — жду окна Gemini и $ide, ничего не отправляю"
     Send-StartReport $rep -DryRun:$DryRun; return $false
   }
   # 2. Лимиты
-  if($DryRun){ try{ $aq=Get-AgQuota; $rep+="2) Лимиты: Antigravity 5 ч осталось $($aq.h5.rem)%, неделя осталось $($aq.wk.rem)% (страницу лимитов Gemini в пробном прогоне не открываю)" }catch{ $rep+="2) Лимиты Antigravity: ошибка $($_.Exception.Message)" } }
+  if($DryRun){ try{ $aq=Get-AgQuota; $rep+="2) Лимиты: $ide 5 ч осталось $($aq.h5.rem)%, неделя осталось $($aq.wk.rem)% (страницу лимитов Gemini в пробном прогоне не открываю)" }catch{ $rep+="2) Лимиты Antigravity: ошибка $($_.Exception.Message)" } }
   else{
     if(-not $script:Q -or ((Get-Date)-$script:LastQuota).TotalMinutes -ge 2){ try{ Check-Quotas | Out-Null }catch{ Log "Лимиты: $($_.Exception.Message)" }; $script:LastQuota=Get-Date }
     $rep+="2) Лимиты: $((Quota-Text) -replace "`n",'; ')"
@@ -1101,10 +1101,11 @@ function Start-Procedure([switch]$DryRun){
   } else { $rep+="3) Модель Gemini: $m ✅" }
   $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{}
   if($gen){ $rep+="   Gemini сейчас генерирует ответ — жду, пока закончит (повтор через $($Cfg.StartRetrySec) сек)"; $rep+='👉 Ход: Gemini — генерирует'; Send-StartReport $rep -DryRun:$DryRun; return $false }
-  $hl=$null; try{ $hl=Get-AgHealth }catch{}
+  $hl=$null; if(-not (Test-IsDsh)){ try{ $hl=Get-AgHealth }catch{} }
   if($hl -and -not $hl.ok){ $rep+="   Antigravity не отвечает ($($hl.reasons -join '; ')) — повтор через $($Cfg.StartRetrySec) сек"; $rep+='👉 Ход: ничей — жду Antigravity'; Send-StartReport $rep -DryRun:$DryRun; return $false }
-  $qn=0; try{ $qn=@(Find-QueuedItems $ah).Count }catch{}
-  $rep+="   Gemini: не генерирует; Antigravity: окно отвечает$(if($qn){", в очереди $qn сообщ. (агент занят)"})"
+  $qn=0; $dshBusy=$false
+  if(Test-IsDsh){ try{ $dshBusy=DshCdp-IsBusy }catch{} } else { try{ $qn=@(Find-QueuedItems $ahH).Count }catch{} }
+  $rep+="   Gemini: не генерирует; ${ide}: $(if(Test-IsDsh){"связь по порту $($Cfg.DshCdpPort)$(if($dshBusy){', агент работает'})"}else{'окно отвечает'})$(if($qn){", в очереди $qn сообщ. (агент занят)"})"
   # 4. Самый новый файл (пункт 24)
   $lp=$null; try{ $lp=Gem-LastReportPrompt }catch{}
   $rep+='4) Файлы:'
@@ -1429,12 +1430,12 @@ function Check-Blocking{
 
 # ---------- Antigravity недоступен: одно сообщение на состояние, редкие напоминания ----------
 function Get-AgBlockText($b){
-  $f= if($b.file){ "ответ на $($b.file) сохранён и будет передан ровно один раз, когда Antigravity примет ввод" } else { 'ответ сохранён' }
+  $f= if($b.file){ "ответ на $($b.file) сохранён и будет передан ровно один раз, когда $(Get-IdeName) примет ввод" } else { 'ответ сохранён' }
   switch($b.kind){
-    'hung'     { "⏸ Antigravity не отвечает (зависло) — жду, $f.`nПризнаки: $($b.detail)" }
-    'nowindow' { "⏸ Окно Antigravity не найдено (закрыто или перезапускается) — жду, $f." }
-    'foreign'  { "✋ В поле чата Antigravity чужой текст: '$($b.detail)' — не трогаю. Отправь или очисти его; $f." }
-    default    { "⚠️ Не удалось вставить ответ в Antigravity, причина не ясна: $($b.msg)`nДиагностика: $($b.detail)`n$f; повторяю раз в $($Cfg.AgBlockRetrySec) сек." }
+    'hung'     { "⏸ $(Get-IdeName) не отвечает (зависло) — жду, $f.`nПризнаки: $($b.detail)" }
+    'nowindow' { "⏸ Окно $(Get-IdeName) не найдено (закрыто или перезапускается) — жду, $f." }
+    'foreign'  { "✋ В поле чата $(Get-IdeName) чужой текст: '$($b.detail)' — не трогаю. Отправь или очисти его; $f." }
+    default    { "⚠️ Не удалось вставить ответ в $(Get-IdeName), причина не ясна: $($b.msg)`nДиагностика: $($b.detail)`n$f; повторяю раз в $($Cfg.AgBlockRetrySec) сек." }
   }
 }
 function Report-AgBlock($Ex,[string]$File){
@@ -1448,7 +1449,7 @@ function Report-AgBlock($Ex,[string]$File){
     $b.msg=$Ex.Message; $b.detail=[string]$Ex.Detail; if($File){ $b.file=$File }
     if($Cfg.AgBlockRemindMin -gt 0 -and ($now-$b.notifiedAt).TotalMinutes -ge $Cfg.AgBlockRemindMin){
       $b.notifiedAt=$now; $t="🔔 Напоминание (уже $([int]($now-$b.since).TotalMinutes) мин): $(Get-AgBlockText $b)"; Log $t; Tg-Send $t | Out-Null
-    } else { Log "Antigravity: всё ещё «$kind» ($($Ex.Message)) — повтор через $($Cfg.AgBlockRetrySec) сек" }
+    } else { Log "$(Get-IdeName): всё ещё «$kind» ($($Ex.Message)) — повтор через $($Cfg.AgBlockRetrySec) сек" }
   }
   $b=$script:AgBlock
   if($Cfg.AgAutoRestartMin -gt 0 -and $b.kind -eq 'hung' -and ($now-$b.since).TotalMinutes -ge $Cfg.AgAutoRestartMin -and (-not $b.restartedAt -or ($now-$b.restartedAt).TotalMinutes -ge $Cfg.AgAutoRestartMin)){

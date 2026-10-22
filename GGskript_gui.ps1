@@ -159,7 +159,7 @@ namespace GG { public class TurnPanel : System.Windows.Forms.Panel {
 }
 $script:turnView=Get-TurnView 'idle' $false (Get-IdeLabel); $script:turnPhase=0
 $pnlTurn=New-Object GG.TurnPanel; $pnlTurn.Dock='Top'; $pnlTurn.Height=72; $pnlTurn.BackColor=[System.Drawing.Color]::White
-$tfEmo=New-Object System.Drawing.Font('Segoe UI Emoji',20); $tfName=New-Object System.Drawing.Font('Segoe UI',12,[System.Drawing.FontStyle]::Bold)
+$tfEmo=New-Object System.Drawing.Font('Segoe UI Emoji',20); $tfName=New-Object System.Drawing.Font('Segoe UI',12,[System.Drawing.FontStyle]::Bold); $tfCombo=New-Object System.Drawing.Font('Segoe UI',10,[System.Drawing.FontStyle]::Bold)
 $tfSub=New-Object System.Drawing.Font('Segoe UI',8.5); $tfCap=New-Object System.Drawing.Font('Segoe UI',11,[System.Drawing.FontStyle]::Bold); $tfChev=New-Object System.Drawing.Font('Segoe UI',14,[System.Drawing.FontStyle]::Bold)
 function Get-TilePal([string]$st){
   $C=[System.Drawing.Color]
@@ -188,11 +188,24 @@ $pnlTurn.Add_Paint({ param($s,$e)
       $g.FillPath((New-Object System.Drawing.SolidBrush($pal.Fill)),$path)
       $g.DrawPath((New-Object System.Drawing.Pen($pal.Edge,$(if($t[3] -in 'active','limit'){2.5}else{1}))),$path); $path.Dispose()
       $g.DrawString($t[1],$tfEmo,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+10),$r.Y,44,$r.Height)),$sf)
+      if($t[0] -eq $xA){
+        # пункт 53: выбор IDE — как обычный выпадающий список: рамка, имя, кнопка-стрелка справа, подсветка при наведении
+        $cb=New-Object System.Drawing.RectangleF(($r.X+56),($r.Y+5),($tw-64),25); $script:comboA=$cb
+        $hov=[bool]$script:comboHover; $C=[System.Drawing.Color]
+        $cbFill= if($hov){ $C::FromArgb(232,240,252) } else { $C::White }; $cbEdge= if($hov){ $C::FromArgb(0,120,215) } else { $C::FromArgb(160,164,172) }
+        $g.FillRectangle((New-Object System.Drawing.SolidBrush($cbFill)),$cb); $g.DrawRectangle((New-Object System.Drawing.Pen($cbEdge,1)),$cb.X,$cb.Y,$cb.Width,$cb.Height)
+        $ab=New-Object System.Drawing.RectangleF(($cb.Right-22),$cb.Y,22,$cb.Height)
+        $g.FillRectangle((New-Object System.Drawing.SolidBrush($(if($hov){$C::FromArgb(204,228,247)}else{$C::FromArgb(240,240,243)}))),($ab.X+1),($ab.Y+1),($ab.Width-1),($ab.Height-1))
+        $g.DrawLine((New-Object System.Drawing.Pen($cbEdge,1)),$ab.X,$ab.Y,$ab.X,$ab.Bottom)
+        $g.DrawString('▼',$tfSub,(New-Object System.Drawing.SolidBrush($C::FromArgb(60,60,66))),$ab,$sf)
+        $g.DrawString($t[2],$tfCombo,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($cb.X+5),$cb.Y,($cb.Width-28),$cb.Height)),$sfL)
+        $g.DrawString((Get-TurnTileSub $t[3]),$tfSub,(New-Object System.Drawing.SolidBrush($pal.Sub)),(New-Object System.Drawing.RectangleF(($r.X+59),($r.Y+31),($tw-62),20)),$sfL)
+        continue
+      }
       $g.DrawString($t[2],$tfName,(New-Object System.Drawing.SolidBrush($pal.Text)),(New-Object System.Drawing.RectangleF(($r.X+58),($r.Y+3),($tw-62),26)),$sfL)
       $g.DrawString((Get-TurnTileSub $t[3]),$tfSub,(New-Object System.Drawing.SolidBrush($pal.Sub)),(New-Object System.Drawing.RectangleF(($r.X+59),($r.Y+28),($tw-62),20)),$sfL)
     }
     $cc=[System.Drawing.Color]::FromName($v.Color); $cr=New-Object System.Drawing.RectangleF((($W-$gap)/2),$top,$gap,($th/2+4))
-    $g.DrawString('▾',$tfSub,(New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(120,120,128))),(New-Object System.Drawing.RectangleF(($xA+$tw-22),($top+2),18,18)),$sf)
     $g.DrawString($v.Caption,$tfCap,(New-Object System.Drawing.SolidBrush($cc)),$cr,$sf)
     $dir= if($v.G -eq 'active'){ '◀  ◀  ◀' } elseif($v.A -eq 'active'){ '▶  ▶  ▶' } else { '' }
     if($dir){
@@ -299,11 +312,12 @@ function Set-PanelIde([string]$v){
   if(Worker-Alive){ Send-Cmd "ide $v" }; Apply-IdeTexts; Write-PanelLog "🛠 IDE: $(Get-IdeLabel)"
 }
 $pnlTurn.Cursor=[System.Windows.Forms.Cursors]::Default
-$pnlTurn.Add_MouseMove({ param($s2,$e2) $in=($script:tileA -and $script:tileA.Contains([float]$e2.X,[float]$e2.Y)); $c= if($in){[System.Windows.Forms.Cursors]::Hand}else{[System.Windows.Forms.Cursors]::Default}; if($pnlTurn.Cursor -ne $c){ $pnlTurn.Cursor=$c; if($in){ $tip.SetToolTip($pnlTurn,$script:ideTx.TileTip) } else { $tip.SetToolTip($pnlTurn,'') } } })
+$pnlTurn.Add_MouseLeave({ if($script:comboHover){ $script:comboHover=$false; $pnlTurn.Invalidate() } })
+$pnlTurn.Add_MouseMove({ param($s2,$e2) $in=($script:tileA -and $script:tileA.Contains([float]$e2.X,[float]$e2.Y)); if($in -ne [bool]$script:comboHover){ $script:comboHover=$in; $pnlTurn.Invalidate() }; $c= if($in){[System.Windows.Forms.Cursors]::Hand}else{[System.Windows.Forms.Cursors]::Default}; if($pnlTurn.Cursor -ne $c){ $pnlTurn.Cursor=$c; if($in){ $tip.SetToolTip($pnlTurn,$script:ideTx.TileTip) } else { $tip.SetToolTip($pnlTurn,'') } } })
 $pnlTurn.Add_MouseClick({ param($s2,$e2)
   if(-not ($script:tileA -and $script:tileA.Contains([float]$e2.X,[float]$e2.Y))){ return }
   if(-not (Test-IdeChangeAllowed)){ $tip.Show('IDE меняю только при «⏸ Стоп»',$pnlTurn,[int]$script:tileA.X,[int]($script:tileA.Bottom+2),2500); return }
-  $ideMenu.Show($pnlTurn,(New-Object System.Drawing.Point([int]$script:tileA.X,[int]$script:tileA.Bottom)))
+  $cbx= if($script:comboA){ $script:comboA } else { $script:tileA }; $ideMenu.MinimumSize=New-Object System.Drawing.Size([int]$cbx.Width,0); $ideMenu.Show($pnlTurn,(New-Object System.Drawing.Point([int]$cbx.X,[int]$cbx.Bottom)))
 })
 $btnMore.Add_Click({ $menu.Show($btnMore,(New-Object System.Drawing.Point(0,$btnMore.Height))) })
 $script:chkSync=$false; $script:chkAt=[datetime]::MinValue
@@ -337,7 +351,7 @@ if($script:RenderOut){
   $lblModel.Text='Модель: 3 Pro'; $lblFile.Text='Файл/этап: Project_2026-10-22_012.md — ждём отчёт'; $lblLim.Text=Format-GuiLimits ([pscustomobject]@{ ide=[string]$Cfg.AgTarget; ideName=(Get-IdeLabel); agH5=80; agH5Reset='18:00'; agWk=60; agWkReset='24.10' })
   $txtLog.Text="15:00:01 Пример журнала`r`n15:00:02 Отправлено в $(Get-IdeLabel) через CDP`r`n"
   $form.Show(); [System.Windows.Forms.Application]::DoEvents()
-  Set-TurnView (Get-TurnView 'antigravity' $true (Get-IdeLabel)); $script:turnPhase=1; foreach($l in $lblCdpG,$lblCdpA){ $l.Text=(Get-PortView $true $(if($l -eq $lblCdpG){'Gemini'}else{$script:ideTx.Short}) $(if($l -eq $lblCdpG){9222}else{[int]$script:ideTx.Port})).Text; $l.ForeColor=[System.Drawing.Color]::ForestGreen }
+  if($env:GG_RENDER_HOVER){ $script:comboHover=$true }; Set-TurnView (Get-TurnView 'antigravity' $true (Get-IdeLabel)); $script:turnPhase=1; foreach($l in $lblCdpG,$lblCdpA){ $l.Text=(Get-PortView $true $(if($l -eq $lblCdpG){'Gemini'}else{$script:ideTx.Short}) $(if($l -eq $lblCdpG){9222}else{[int]$script:ideTx.Port})).Text; $l.ForeColor=[System.Drawing.Color]::ForestGreen }
   [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 300; [System.Windows.Forms.Application]::DoEvents()
   $bm=New-Object System.Drawing.Bitmap($form.Width,$form.Height); $form.DrawToBitmap($bm,(New-Object System.Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bm.Save($script:RenderOut,[System.Drawing.Imaging.ImageFormat]::Png)
   $timer.Dispose(); $form.Dispose(); return

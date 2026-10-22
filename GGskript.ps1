@@ -57,7 +57,7 @@ try{ $script:LastDone=Get-LastDoneName }catch{}
 # ---- Тестовые режимы (без изменения состояния) ----
 if($args -contains '-teststart'){ Init-Tg; Start-Procedure -DryRun | Out-Null; exit }
 if($args -contains '-check'){
-  Log "Проверка: Gemini готов=$(try{Gem-IsReady}catch{$false}) Antigravity=$([bool](Ag-GetWindow)) файлов=$(@(Get-Files).Count) DPI=$script:DpiMode транспорт Gemini=$($Cfg.GeminiTransport) AG=$($Cfg.AgTransport)"
+  Log "Проверка: Gemini готов=$(try{Gem-IsReady}catch{$false}) $(Get-IdeName)=$([bool](Get-IdeWindowState).present) файлов=$(@(Get-Files).Count) DPI=$script:DpiMode транспорт Gemini=$($Cfg.GeminiTransport) AG=$($Cfg.AgTransport)"
   $cand=@(Get-Files | ForEach-Object { $_.Name })
   Write-Host "  Шаблон: $($Cfg.Pattern)  IgnoreBefore: $($Cfg.IgnoreBefore)"
   Get-Files -All | ForEach-Object { $lbl= if(Is-Done $_.Name){'обработан'} elseif($cand -notcontains $_.Name){'старый (раньше IgnoreBefore) — не беру'} else {'БУДЕТ ОБРАБОТАН'}; Write-Host ("  {0,-40} проект={1,-18} {2} [{3}]" -f $_.Name,(ProjOf $_.Name),$lbl,(Get-StageRu (Get-Stage $_.Name))) }

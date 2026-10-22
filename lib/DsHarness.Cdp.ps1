@@ -164,3 +164,12 @@ function Get-DshCdpDiag{
   try{ $c=Connect-DshCdp -Force; $d.chat=$c.title; $d.field=DshCdp-InputText $c; $d.busy=DshCdp-IsBusy; $d.limit=Get-DshLimit }catch{ $d.err=$_.Exception.Message }
   $d
 }
+# пункт 53: окно/связь выбранной IDE для протокола запуска: @{ present; input; h; note }
+function Get-IdeWindowState{
+  if(Test-IsDsh){
+    try{ $c=Connect-DshCdp; return @{ present=$true; input=$true; h=$null; note="порт $($Cfg.DshCdpPort), окно «$(Format-Short ([string]$c.title) 50)»" } }
+    catch{ return @{ present=$false; input=$false; h=$null; note="порт $($Cfg.DshCdpPort): $($_.Exception.Message)" } }
+  }
+  $h=Ag-GetWindow; $i=$false; if($h){ try{ $i=[bool](AgUia-FindInput $h) }catch{} }
+  @{ present=[bool]$h; input=$i; h=$h; note='' }
+}
