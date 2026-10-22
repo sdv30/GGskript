@@ -23,6 +23,7 @@ function Start-Worker{
   Remove-Item -LiteralPath $Cfg.StopFile -EA 0
   Start-Process powershell -WindowStyle Hidden -WorkingDirectory $dir -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',('"'+$Worker+'"')
 }
+function Get-IdeLabel{ if([string]$Cfg.AgTarget -eq 'dsharness'){ 'DeepSeek Harness' } else { 'Antigravity' } }
 function Send-Cmd($text){ [void](Send-GuiCmd -Path $Cfg.CmdFile -Text $text) }
 
 # ---- форма ----
@@ -102,9 +103,17 @@ Add-BtnRow '' @($btnMore,$chkAuto,$chkAcc)
 # ---- пункт 39: режим без мыши (порты отладки) ----
 $btnCdpG=New-Btn '🌐 Chrome с портом' 'Открыть отдельный Chrome для Gemini с портом 9222 (обычный Chrome/Яндекс не закрываю). С портом скрипт работает без мыши.' 200
 $btnCdpA=New-Btn '🛠 Antigravity с портом' 'Перезапустить Antigravity с портом 9333 (спрошу подтверждение). С портом — без мыши и автоподтверждение надёжнее.' 200
-$lblCdpG=New-Lbl '○ Gemini 9222: …'; $lblCdpA=New-Lbl '○ Antigravity 9333: …'
-foreach($l in $lblCdpG,$lblCdpA){ $l.Margin=New-Object System.Windows.Forms.Padding(6,9,3,2); $l.ForeColor=[System.Drawing.Color]::Gray }
-Add-BtnRow 'РЕЖИМ БЕЗ МЫШИ' @($btnCdpG,$btnCdpA,$lblCdpG,$lblCdpA)
+$btnCdpD=New-Btn '🛠 Harness с портом' 'Перезапустить DeepSeek Harness с портом 9334 (спрошу подтверждение): закрою все его процессы, включая трей, и запущу с портом.' 200
+$lblCdpG=New-Lbl '○ Gemini 9222: …'; $lblCdpA=New-Lbl '○ Antigravity 9333: …'; $lblCdpD=New-Lbl '○ Harness 9334: …'
+# пункт 51: выбор IDE-стороны (меняется только при ⏸ Стоп или когда скрипт не запущен)
+$lblIde=New-Lbl 'IDE:'; $lblIde.Margin=New-Object System.Windows.Forms.Padding(6,9,0,2)
+$cmbIde=New-Object System.Windows.Forms.ComboBox; $cmbIde.DropDownStyle='DropDownList'; $cmbIde.Font=$btnFont; $cmbIde.Width=170; $cmbIde.Margin=New-Object System.Windows.Forms.Padding(3,5,3,2)
+foreach($c in Get-IdeChoices){ [void]$cmbIde.Items.Add($c.t) }
+$script:ideVals=@(Get-IdeChoices | ForEach-Object { $_.v }); $cmbIde.SelectedIndex=[Math]::Max(0,[array]::IndexOf($script:ideVals,[string]$Cfg.AgTarget))
+$tip.SetToolTip($cmbIde,'Кто на стороне IDE: Antigravity или DeepSeek Harness. Сменить можно только при «⏸ Стоп».')
+foreach($l in $lblCdpG,$lblCdpA,$lblCdpD){ $l.Margin=New-Object System.Windows.Forms.Padding(6,9,3,2); $l.ForeColor=[System.Drawing.Color]::Gray }
+Add-BtnRow 'РЕЖИМ БЕЗ МЫШИ' @($btnCdpG,$btnCdpA,$btnCdpD,$lblCdpG,$lblCdpA,$lblCdpD)
+Add-BtnRow 'IDE' @($lblIde,$cmbIde)
 
 # ---- меню «☰ Ещё» ----
 $menu=New-Object System.Windows.Forms.ContextMenuStrip; $menu.Font=$btnFont; $menu.ShowImageMargin=$false
@@ -143,7 +152,7 @@ namespace GG { public class TurnPanel : System.Windows.Forms.Panel {
 } }
 '@
 }
-$script:turnView=Get-TurnView 'idle' $false; $script:turnPhase=0
+$script:turnView=Get-TurnView 'idle' $false (Get-IdeLabel); $script:turnPhase=0
 $pnlTurn=New-Object GG.TurnPanel; $pnlTurn.Dock='Top'; $pnlTurn.Height=72; $pnlTurn.BackColor=[System.Drawing.Color]::White
 $tfEmo=New-Object System.Drawing.Font('Segoe UI Emoji',20); $tfName=New-Object System.Drawing.Font('Segoe UI',12,[System.Drawing.FontStyle]::Bold)
 $tfSub=New-Object System.Drawing.Font('Segoe UI',8.5); $tfCap=New-Object System.Drawing.Font('Segoe UI',11,[System.Drawing.FontStyle]::Bold); $tfChev=New-Object System.Drawing.Font('Segoe UI',14,[System.Drawing.FontStyle]::Bold)
@@ -167,7 +176,7 @@ $pnlTurn.Add_Paint({ param($s,$e)
     $xG=($W-$gap)/2-$tw; $xA=($W+$gap)/2
     $sf=New-Object System.Drawing.StringFormat; $sf.Alignment='Center'; $sf.LineAlignment='Center'
     $sfL=New-Object System.Drawing.StringFormat; $sfL.LineAlignment='Center'
-    foreach($t in @(@($xG,'✨','Gemini',$v.G),@($xA,'🛠','Antigravity',$v.A))){
+    foreach($t in @(@($xG,'✨','Gemini',$v.G),@($xA,'🛠',$(if($v.Ide){[string]$v.Ide}else{'Antigravity'}),$v.A))){
       $pal=Get-TilePal $t[3]; $r=New-Object System.Drawing.RectangleF([float]$t[0],[float]$top,[float]$tw,[float]$th)
       $path=New-RoundPath $r 12
       $g.FillPath((New-Object System.Drawing.SolidBrush($pal.Fill)),$path)
@@ -193,7 +202,7 @@ $turnTimer.Add_Tick({ $script:turnPhase=($script:turnPhase+1)%48; $pnlTurn.Inval
 function Set-TurnView($v){
   $old=$script:turnView; $script:turnView=$v
   if($v.Anim){ if(-not $turnTimer.Enabled){ $turnTimer.Start() } } else { if($turnTimer.Enabled){ $turnTimer.Stop() } }
-  if(-not $old -or $old.Caption -ne $v.Caption -or $old.G -ne $v.G -or $old.A -ne $v.A){ $pnlTurn.Invalidate() }
+  if(-not $old -or $old.Caption -ne $v.Caption -or $old.Ide -ne $v.Ide -or $old.G -ne $v.G -or $old.A -ne $v.A){ $pnlTurn.Invalidate() }
 }
 $form.Controls.Add($txtLog); $form.Controls.Add($pnlCmd); $form.Controls.Add($pnlBtn); $form.Controls.Add($pnlTop); $form.Controls.Add($pnlTurn)
 
@@ -214,13 +223,14 @@ function Update-Status{
   if(-not (Worker-Alive)){
     $lblState.Text='Состояние: воркер не запущен'; $lblState.ForeColor=[System.Drawing.Color]::DimGray
     $lblModel.Text='Модель: —'; $lblFile.Text='Нажмите «Старт», чтобы запустить передачу.'; $lblLim.Text='Лимиты: —'; $lblAct.Text=''
-    Set-TurnView (Get-TurnView 'off' $false); return
+    Set-TurnView (Get-TurnView 'off' $false (Get-IdeLabel)); $cmbIde.Enabled=$true; return
   }
   try{
     $j=[IO.File]::ReadAllText($Cfg.StatusFile,[Text.Encoding]::UTF8) | ConvertFrom-Json; $v=Get-GuiStateView $j
     $lblState.Text=$v.State; $lblState.ForeColor=[System.Drawing.Color]::FromName($v.Color)
     $lblModel.Text=$v.Model; $lblFile.Text=$v.File; $lblLim.Text=$v.Limits; $lblAct.Text=$v.Action
-    $tn= if($j.turn){ [string]$j.turn } else { Get-RelayTurn -Kind ([string]$j.kind) }; Set-TurnView (Get-TurnView $tn $true)
+    $tn= if($j.turn){ [string]$j.turn } else { Get-RelayTurn -Kind ([string]$j.kind) }; Set-TurnView (Get-TurnView $tn $true $(if($j.ideName){[string]$j.ideName}else{Get-IdeLabel})); $cmbIde.Enabled=(Test-Path -LiteralPath $Cfg.PauseFile)
+    if($j.ide -and -not $script:ideSync -and $script:ideVals[$cmbIde.SelectedIndex] -ne [string]$j.ide){ $script:ideSync=$true; $cmbIde.SelectedIndex=[Math]::Max(0,[array]::IndexOf($script:ideVals,[string]$j.ide)); $script:ideSync=$false }
     if($null -ne $j.autoAccept -and ((Get-Date)-$script:chkAccAt).TotalSeconds -gt 5 -and $chkAcc.Checked -ne [bool]$j.autoAccept){ $script:chkSync=$true; $chkAcc.Checked=[bool]$j.autoAccept; $script:chkSync=$false }
     if($null -ne $j.autoAllow -and ((Get-Date)-$script:chkAt).TotalSeconds -gt 5 -and $chkAuto.Checked -ne [bool]$j.autoAllow){ $script:chkSync=$true; $chkAuto.Checked=[bool]$j.autoAllow; $script:chkSync=$false }
   }catch{}
@@ -246,7 +256,7 @@ function Send-PcText([string]$k,[string]$text){ Send-Cmd ("/pc_$k b64:"+[Convert
 function Confirm-Gui([string]$msg){ ([System.Windows.Forms.MessageBox]::Show($form,$msg,'GGskript',[System.Windows.Forms.MessageBoxButtons]::OKCancel,[System.Windows.Forms.MessageBoxIcon]::Question)) -eq 'OK' }
 
 $btnStart.Add_Click({ Remove-Item -LiteralPath $Cfg.PauseFile -EA 0; if(-not (Worker-Alive)){ Start-Worker } else { Send-Cmd 'старт' } })
-$btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}; Send-Cmd 'стоп'; Set-TurnView (Get-TurnView 'stopped'); $lblState.Text='Состояние: ⏸ Остановлен — ничего не делаю'; $lblState.ForeColor=[System.Drawing.Color]::DarkOrange })
+$btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}; Send-Cmd 'стоп'; Set-TurnView (Get-TurnView 'stopped' $true (Get-IdeLabel)); $cmbIde.Enabled=$true; $lblState.Text='Состояние: ⏸ Остановлен — ничего не делаю'; $lblState.ForeColor=[System.Drawing.Color]::DarkOrange })
 $miExit.Add_Click({
   $r=[System.Windows.Forms.MessageBox]::Show($form,"Выключить GGskript (воркер) совсем? Из Telegram запустить снова будет нельзя — только кнопкой «Старт» здесь или ярлыком.`nЧтобы просто остановиться и слушать Telegram — кнопка «Стоп».",'GGskript',[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Warning)
   if($r -eq 'Yes'){ try{ New-Item -ItemType File $Cfg.StopFile -Force | Out-Null }catch{} }
@@ -260,7 +270,7 @@ $btnAgT.Add_Click({ $t=Show-TextInput '🛠 Antigravity: текст' 'Текст
 $script:cdpAt=[datetime]::MinValue
 function Update-CdpView([switch]$Force){
   if(-not $Force -and ((Get-Date)-$script:cdpAt).TotalSeconds -lt 5){ return }; $script:cdpAt=Get-Date
-  foreach($x in @(@($lblCdpG,'Gemini',[int]$Cfg.CdpPort),@($lblCdpA,'Antigravity',[int]$Cfg.AgCdpPort))){ $v=Get-PortView (Test-PortUp $x[2]) $x[1] $x[2]; $x[0].Text=$v.Text; $x[0].ForeColor=[System.Drawing.Color]::FromName($v.Color) }
+  foreach($x in @(@($lblCdpG,'Gemini',[int]$Cfg.CdpPort),@($lblCdpA,'Antigravity',[int]$Cfg.AgCdpPort),@($lblCdpD,'Harness',[int]$Cfg.DshCdpPort))){ $v=Get-PortView (Test-PortUp $x[2]) $x[1] $x[2]; $x[0].Text=$v.Text; $x[0].ForeColor=[System.Drawing.Color]::FromName($v.Color) }
 }
 function Write-PanelLog([string]$m){ $txtLog.AppendText("$(Get-Date -Format 'HH:mm:ss') $m`r`n"); $txtLog.ScrollToCaret() }
 $btnCdpG.Add_Click({ try{ Write-PanelLog (Start-GeminiCdpChrome ([int]$Cfg.CdpPort)) }catch{ Write-PanelLog "❌ Chrome с портом: $($_.Exception.Message)" }; Send-Cmd '/pc_cdpcheck'; Update-CdpView -Force })
@@ -269,6 +279,20 @@ $btnCdpA.Add_Click({
   $form.Cursor=[System.Windows.Forms.Cursors]::WaitCursor
   try{ Write-PanelLog (Restart-AgCdp ([int]$Cfg.AgCdpPort)) }catch{ Write-PanelLog "❌ Antigravity с портом: $($_.Exception.Message)" } finally { $form.Cursor=[System.Windows.Forms.Cursors]::Default }
   Send-Cmd '/pc_cdpcheck'; Update-CdpView -Force
+})
+$btnCdpD.Add_Click({
+  if(-not (Confirm-Gui "Перезапустить DeepSeek Harness с портом отладки $($Cfg.DshCdpPort)?`n`nВсе процессы Harness (и значок в трее) будут закрыты, затем он откроется с портом.`nТекущий ответ агента, если он идёт, прервётся.")){ return }
+  $form.Cursor=[System.Windows.Forms.Cursors]::WaitCursor
+  try{ Write-PanelLog (Restart-DshCdp ([int]$Cfg.DshCdpPort)) }catch{ Write-PanelLog "❌ Harness с портом: $($_.Exception.Message)" } finally { $form.Cursor=[System.Windows.Forms.Cursors]::Default }
+  Update-CdpView -Force
+})
+$script:ideSync=$false
+$cmbIde.Add_SelectedIndexChanged({
+  if($script:ideSync){ return }
+  $v=$script:ideVals[$cmbIde.SelectedIndex]; if($v -eq $Cfg.AgTarget){ return }
+  if((Worker-Alive) -and -not (Test-Path -LiteralPath $Cfg.PauseFile)){ Write-PanelLog '⛔ IDE меняю только при «⏸ Стоп».'; $script:ideSync=$true; $cmbIde.SelectedIndex=[Math]::Max(0,[array]::IndexOf($script:ideVals,[string]$Cfg.AgTarget)); $script:ideSync=$false; return }
+  $Cfg.AgTarget=$v; try{ Save-SettingValue (Join-Path $dir 'relay_settings.json') 'AgTarget' $v }catch{}
+  if(Worker-Alive){ Send-Cmd "ide $v" }; Write-PanelLog "🛠 IDE: $(Get-IdeLabel)"; Set-TurnView (Get-TurnView 'stopped' $true (Get-IdeLabel))
 })
 $btnMore.Add_Click({ $menu.Show($btnMore,(New-Object System.Drawing.Point(0,$btnMore.Height))) })
 $script:chkSync=$false; $script:chkAt=[datetime]::MinValue

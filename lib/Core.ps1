@@ -132,6 +132,10 @@ function Get-DefaultSettings{
     ScreenshotMode     = 'dialog'   # 'dialog' — только область блокирующего диалога; 'full' — как раньше; 'off'
     AgTransport        = 'uia'      # 'uia' (как раньше, с проверками), 'cdp' (пункт 27B: без фокуса, нужен Start-Antigravity-Debug.bat) или 'mailbox'
     AgCdpPort          = 9333       # порт DevTools Antigravity (Start-Antigravity-Debug.bat)
+    AgTarget           = 'antigravity'  # пункт 51: IDE-сторона — 'antigravity' или 'dsharness' (DeepSeek Harness, только CDP)
+    DshCdpPort         = 9334       # порт DevTools DeepSeek Harness (кнопка «🛠 Harness с портом»)
+    DshCdpSelectors    = @{}        # переопределение селекторов DeepSeek Harness (см. lib/DsHarness.Cdp.ps1)
+    DshAllowOptionRx   = '^(Разрешить( один раз| однократно)?|Allow( once| this time)?|Yes, allow this time)$'  # автоподтверждение в Harness: только «один раз»
     AgCdpFallback      = $true      # CDP Antigravity недоступен — отправка через UIA (с фокусом) и одно сообщение в Telegram
     AgCdpSelectors     = @{}        # переопределение селекторов чата Antigravity (см. lib/Antigravity.Cdp.ps1)
     AgInvokeNoFocus    = $true      # пункт 27B: «Accept all» сначала нажимать через UIA Invoke без вывода окна на передний план
@@ -233,11 +237,11 @@ function Merge-Settings{
       $cfg[$k]=$nv
     }
   }
-  foreach($rx in 'Pattern','RxPrompt','RxCode','RxCopy','RxStop','RxModel','ModelMenuSkipRx','ModelSelectedRx','AgPlaceholderRx','AgSendNowName','AcceptAllName','AutoAllowOptionRx','AutoAllowSubmitRx','UsageTabTitle','UsageExistingTabRx','SafeBtnRx'){
+  foreach($rx in 'Pattern','RxPrompt','RxCode','RxCopy','RxStop','RxModel','ModelMenuSkipRx','ModelSelectedRx','AgPlaceholderRx','AgSendNowName','AcceptAllName','AutoAllowOptionRx','AutoAllowSubmitRx','DshAllowOptionRx','UsageTabTitle','UsageExistingTabRx','SafeBtnRx'){
     try{ [void][regex]::new([string]$cfg[$rx]) }catch{ $warn.Add("Настройка '$rx' — некорректный регэксп, верну значение по умолчанию"); $cfg[$rx]=$Defaults[$rx] }
   }
   if($cfg.Pattern -notmatch '\?<project>' -or $cfg.Pattern -notmatch '\?<date>' -or $cfg.Pattern -notmatch '\?<n>'){ $warn.Add("В Pattern нет групп project/date/n — верну значение по умолчанию"); $cfg.Pattern=$Defaults.Pattern }
-  foreach($e in @(@('AgVerifyPaste','strict','lenient'),@('AgTransport','uia','cdp','mailbox'),@('GeminiTransport','uia','cdp'),@('CodeBlockPick','last','first'),@('ScreenshotMode','dialog','full','off'),@('Sounds','important','off','all'))){
+  foreach($e in @(@('AgVerifyPaste','strict','lenient'),@('AgTransport','uia','cdp','mailbox'),@('AgTarget','antigravity','dsharness'),@('GeminiTransport','uia','cdp'),@('CodeBlockPick','last','first'),@('ScreenshotMode','dialog','full','off'),@('Sounds','important','off','all'))){
     if(@($e[1..($e.Count-1)]) -notcontains [string]$cfg[$e[0]]){ $warn.Add("Настройка '$($e[0])'='$($cfg[$e[0]])' не поддерживается — верну '$($Defaults[$e[0]])'"); $cfg[$e[0]]=$Defaults[$e[0]] }
   }
   [pscustomobject]@{ Cfg=$cfg; Warnings=$warn.ToArray() }
@@ -597,6 +601,13 @@ function Parse-Command{
     if($tl -match '^(cancel|отмена|abort)$'){ return @{k='shutdowncancel'} }; if($tl -match '^(status|статус)$'){ return @{k='shutdownstatus'} }
     return @{k='shutdown'; spec=(ConvertFrom-ShutdownTail $tl)} }
   if($n -match "^\s*(?:пожалуйста,?\s+)?(?:выключи(?:ть)?|выруби(?:ть)?|отключи(?:ть)?)\s+$pcw(?:\s+(.*?))?\s*[.!]*\s*$"){ return @{k='shutdown'; spec=(ConvertFrom-ShutdownTail ([string]$matches[1]))} }
+  # пункт 51: выбор IDE: «ide antigravity|dsharness», /ide <...>, «иде харнес»
+  if($t -match '^/ide(?:@\S+)?(?:\s+(\S+))?\s*$' -or $n -match "^\s*(?:ide|иде)(?:\s+(\S+))?$end"){
+    $a=[string]$matches[1]
+    if($a -match '^(antigravity|антигравити|ag)$'){ return @{k='ide'; v='antigravity'} }
+    if($a -match '^(dsharness|harness|харнес\w*|deepseek|dsh)$'){ return @{k='ide'; v='dsharness'} }
+    return @{k='ide'; v=$null}
+  }
   # автопринятие «Accept all»: «автопринятие вкл|выкл», /autoaccept on|off
   if($t -match '^/autoaccept(?:@\S+)?(?:\s+(\S+))?\s*$' -or $n -match "^\s*авто\s*-?\s*приняти\w*(?:\s+(\S+))?$end"){
     $a=[string]$matches[1]

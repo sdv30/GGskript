@@ -1,7 +1,7 @@
 ﻿# Общая загрузка для тестов: dot-source всех lib/*.ps1 в область теста. Платформенные функции не инициализируются.
 $script:V2Root = Split-Path $PSScriptRoot -Parent
 $env:GG_NO_BEEP='1'   # пункт 27D: тесты не пищат динамиком ПК (раньше прогон тестов на ПК вызывал реальные [Console]::Beep)
-foreach($f in 'Core','State','Platform.Win','Uia','Telegram','Gemini.Uia','Gemini.Cdp','Gemini','Antigravity','Antigravity.Cdp','Relay','Chat','Shutdown','Gui.Core'){
+foreach($f in 'Core','State','Platform.Win','Uia','Telegram','Gemini.Uia','Gemini.Cdp','Gemini','Antigravity','Antigravity.Cdp','DsHarness.Cdp','Relay','Chat','Shutdown','Gui.Core'){
   $p=Join-Path $script:V2Root "lib/$f.ps1"
   if(Test-Path $p){ . $p }
 }

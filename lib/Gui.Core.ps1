@@ -103,9 +103,10 @@ function Restart-AgCdp([int]$Port=9333,[int]$WaitSec=30,
 
 # ---------- Пункт 41: индикатор «чей ход» (Gemini / Antigravity) ----------
 # Как рисовать индикатор: подписи, подсветка плиток, анимация.
-function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true){
+function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true,[string]$Ide='Antigravity'){
   if(-not $WorkerAlive){ $Turn='off' }
-  switch($Turn){
+  if(-not $Ide){ $Ide='Antigravity' }
+  $v=switch($Turn){
     'gemini'      { @{ Caption='Ход Gemini';       G='active'; A='wait'; Anim=$true;  Color='ForestGreen' } }
     'antigravity' { @{ Caption='Ход Antigravity';  G='wait'; A='active'; Anim=$true;  Color='ForestGreen' } }
     'stopped'     { @{ Caption='⏸ Остановлен';     G='off';  A='off';    Anim=$false; Color='DimGray' } }
@@ -114,5 +115,27 @@ function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true){
     'off'         { @{ Caption='Скрипт не запущен'; G='off';  A='off';    Anim=$false; Color='DimGray' } }
     default       { @{ Caption='Ожидание работы';  G='wait'; A='wait';   Anim=$false; Color='DimGray' } }
   }
+  if($Turn -eq 'antigravity'){ $v.Caption="Ход $Ide" }
+  $v.Ide=$Ide; $v
+}
+# пункт 51: IDE-сторона для панели
+function Get-IdeChoices{ @([ordered]@{ v='antigravity'; t='Antigravity' }, [ordered]@{ v='dsharness'; t='DeepSeek Harness' }) }
+function Get-DshExe{ Find-FirstPath @("$env:LOCALAPPDATA\Programs\DeepSeek Harness\DeepSeek Harness.exe") }
+function Get-DshDebugArgs([int]$Port){ @("--remote-debugging-port=$Port","--remote-allow-origins=http://127.0.0.1:$Port") }
+# Перезапуск DeepSeek Harness с портом: Harness сворачивается в трей и держит фоновые процессы — после CloseMainWindow
+# оставшиеся процессы завершаю принудительно (иначе новый запуск откроет старое окно без порта).
+function Restart-DshCdp([int]$Port=9334,[int]$WaitSec=10,
+  [scriptblock]$GetProcs={ @(Get-Process -Name 'DeepSeek Harness' -EA 0) },
+  [scriptblock]$Killer={ param($p) Stop-Process -Id $p.Id -Force -EA 0 },
+  [scriptblock]$Starter={ param($exe,$a) Start-Process -FilePath $exe -ArgumentList $a }){
+  if(Test-PortUp $Port){ return "🛠 DeepSeek Harness уже с портом $Port — перезапуск не нужен." }
+  $exe=Get-DshExe; if(-not $exe){ return '❌ DeepSeek Harness не найден.' }
+  foreach($p in @(& $GetProcs)){ try{ if($p.MainWindowHandle -ne [IntPtr]::Zero){ [void]$p.CloseMainWindow() } }catch{} }
+  $t0=Get-Date; while(@(& $GetProcs).Count -and ((Get-Date)-$t0).TotalSeconds -lt $WaitSec){ Start-Sleep -Milliseconds 500 }
+  foreach($p in @(& $GetProcs)){ & $Killer $p }
+  Start-Sleep -Milliseconds 800
+  if(@(& $GetProcs).Count){ return '❌ DeepSeek Harness не закрылся полностью. Закройте его (и в трее) и нажмите кнопку ещё раз.' }
+  & $Starter $exe (Get-DshDebugArgs $Port)
+  "🛠 Перезапустил DeepSeek Harness с портом $Port. Откройте нужную сессию в списке слева."
 }
 function Get-TurnTileSub([string]$St){ switch($St){ 'active'{'в работе'} 'wait'{'ожидание'} 'limit'{'лимит'} default{'—'} } }

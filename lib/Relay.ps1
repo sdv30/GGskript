@@ -339,6 +339,7 @@ function Check-OurPrompt($pBefore,[string]$Name){
   throw "Не вижу нашего сообщения в диалоге Gemini (запросов было $pBefore, стало $pNow) — ответ НЕ передаю"
 }
 function Ag-HasText([string]$Text){
+  if($Cfg.AgTarget -eq 'dsharness'){ try{ $r=Test-DshDelivered $Text; if($null -ne $r){ return $r } }catch{ Log "Сверка с DeepSeek Harness через CDP: $($_.Exception.Message)" }; return $false }
   # пункт 28: AgTransport=cdp — сверяю с текстом страницы Antigravity (UIA-дерево Electron чат не показывает — была ложная «нет»)
   if($Cfg.AgTransport -eq 'cdp'){
     try{ $r=Test-TextInBody -Text $Text -Body ([string](AgEval-Js 'body')); if($null -ne $r){ return $r } }catch{ Log "Сверка с Antigravity через CDP: $($_.Exception.Message) — пробую UIA" }
@@ -574,7 +575,7 @@ function Format-StatusHtml([string]$T){
 }
 function Get-StatusText{
   $m=try{ Get-ModelNow }catch{ "? ($($_.Exception.Message))" }
-  $acc=try{ $h=Ag-GetWindow; [bool]($h -and (Find-AcceptAll $h)) }catch{ $false }
+  $acc=try{ if($Cfg.AgTarget -eq 'dsharness'){ [bool](DshCdp-AcceptAll -Dry).found } else { $h=Ag-GetWindow; [bool]($h -and (Find-AcceptAll $h)) } }catch{ $false }
   $pend=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -in @('sent','answered','resend','stale','operator') } | ForEach-Object { "$_ — $(Get-StageRu (Get-Stage $_))" }) -join '; '; if(!$pend){ $pend='нет' }
   $tail= try{ (Get-Content -LiteralPath $Cfg.LogFile -Encoding UTF8 -Tail 5) -join "`n" }catch{ '' }
   $st= if($script:Paused){ "⏸ Остановлен — ничего не делаю (жду «Старт»)" } else { $script:State }
@@ -592,6 +593,7 @@ Antigravity: $(if($script:AgBlock){ "НЕ принимает ответ — $($s
 Пауза: $(if($script:Paused){'ДА'}else{'нет'})
 Команд в очереди: $($script:Queue.Count)
 Модель Gemini: $m
+IDE: $(Get-IdeName)$(if($Cfg.AgTarget -eq 'dsharness'){" (CDP $($Cfg.DshCdpPort))"})
 Транспорт: Gemini=$($Cfg.GeminiTransport), Antigravity=$($Cfg.AgTransport)
 Кнопка Accept all в Antigravity: $(if($acc){'есть'}else{'нет'})
 Лимиты: $(Quota-Text)
@@ -641,6 +643,7 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
                 [void](New-TgPrompt -Kind 'exit' -Text "Выключить GGskript совсем? Процесс завершится, и из Telegram его снова запустить будет НЕЛЬЗЯ — только ярлыком GGskript на ПК.`nЕсли нужно просто остановиться — «Стоп» (процесс останется и будет слушать Telegram)." -Buttons 'Да, выключить скрипт=yes|Нет=no' -TimeoutMin ([double]$Cfg.ShutdownConfirmMin) -ReplyTo $ReplyTo) }
     'resume'  { $wasP=$script:Paused; if($wasP){ Set-Pause $false 'команда' }; $qb=Quota-Blocked; if($qb){ Quota-Override; Tg-Send "▶️ Ок, игнорирую остановку по лимитам ($qb), пока не станет хуже ещё на $($Cfg.QuotaReWarnStep) пунктов." | Out-Null }
       if($script:LimitStop){ Resume-Work 'по команде' } elseif(-not $qb -and -not $wasP){ Tg-Send "▶️ Продолжаю работу. Следующий файл: $(if($n=Next-FileName){$n}else{'новых файлов пока нет'})" | Out-Null } }
+    'ide' { Set-IdeTarget ([string]$c.v) $Source }
     'autoaccept' { if($null -ne $c.on){ Set-AutoAccept ([bool]$c.on) $Source } else { Tg-Send "Автопринятие «Accept all»: $(if($Cfg.AutoAcceptAll){'ВКЛ'}else{'выкл'}). «автопринятие вкл» / «автопринятие выкл»." | Out-Null } }
     'autoallow' { if($null -ne $c.on){ Set-AutoAllow ([bool]$c.on) $Source } else { Tg-Send "Автоподтверждение запросов Antigravity: $(if($Cfg.AutoAllowPrompts){'ВКЛ'}else{'выкл'}). Включить/выключить: «автоподтверждение вкл» / «автоподтверждение выкл»." | Out-Null } }
     'shot'    { try{ Send-Screenshot }catch{ Tg-Send "Не удалось сделать скриншот: $($_.Exception.Message)" | Out-Null } }
@@ -808,6 +811,15 @@ function Invoke-GitCheckpoint{
 }
 function Try-AcceptAll([switch]$Report){
   if($script:Paused){ return $false }
+  if($Cfg.AgTarget -eq 'dsharness'){   # пункт 51: Harness — только DOM через CDP
+    $d=$null; try{ $d=DshCdp-AcceptAll -Dry }catch{ return $false }
+    if(-not $d -or -not $d.found -or $d.busy){ return $false }
+    if(-not (Invoke-GitCheckpoint) -and $Cfg.GitCheckpointRequired){ Tg-Send '⛔ Accept all НЕ нажат: не удался git-чекпоинт (GitCheckpointRequired=true).' -DedupMin 30 | Out-Null; return $false }
+    if(Test-StopNow){ return $false }
+    $r=$null; try{ $r=DshCdp-AcceptAll }catch{ Log "Accept all (Harness): $($_.Exception.Message)" }
+    if($r -and $r.ok){ Log '✅ Принять все нажато в DeepSeek Harness (CDP, без фокуса)'; if($Report){ Tg-Send '✅ DeepSeek Harness: «Принять все» нажато' | Out-Null }; return $true }
+    return $false
+  }
   $h=Ag-GetWindow; if(!$h){ return $false }
   # пункт 46: в Antigravity «Accept all» — <span> с onClick, не Button: UIA его не видит. С CDP — только DOM (span), агент не должен работать.
   if($Cfg.AgTransport -eq 'cdp'){
@@ -842,6 +854,7 @@ function Find-QueuedItems($h){
   }
 }
 function Check-AgQueue{
+  if($Cfg.AgTarget -eq 'dsharness'){ return }
   $h=Ag-GetWindow; if(!$h){ return }
   $items=@(Find-QueuedItems $h)
   foreach($k in @($script:QueueSeen.Keys)){ if(-not ($items | Where-Object { $_.key -eq $k })){ $script:QueueSeen.Remove($k); $script:QueueTries.Remove($k) } }
@@ -904,6 +917,7 @@ function Set-AutoAllow([bool]$On,[string]$Source='pc'){
 function Try-AutoAllow{
   if(-not $Cfg.AutoAllowPrompts -or (Test-StopNow)){ return $false }
   $r=$null
+  if($Cfg.AgTarget -eq 'dsharness'){ try{ $r=DshCdp-AllowPrompt }catch{ $r=$null }; if($r -and $r.ok){ Log "Автоподтверждение (Harness): «$(Format-Short ([string]$r.opt) 40)» (CDP, без фокуса)"; return $true }; return $false }
   if($Cfg.AgTransport -eq 'cdp'){ try{ $r=AgCdp-AllowPrompt; if($r -and $r.ok){ $r.how='CDP, без фокуса' } }catch{ $r=$null } }
   if(-not ($r -and $r.ok)){
     $h=Ag-GetWindow
@@ -929,11 +943,21 @@ function Invoke-AutoAllowTick{
 $script:LastAutoAccept=Get-Date; $script:InAutoAccept=$false
 function Invoke-AutoAcceptTick{
   if(Test-StopNow){ return }
-  if(-not $Cfg.AutoAcceptAll -or $Cfg.AgTransport -ne 'cdp' -or $script:InAutoAccept -or [int]$script:FocusDepth -gt 0){ return }
+  if(-not $Cfg.AutoAcceptAll -or ($Cfg.AgTransport -ne 'cdp' -and $Cfg.AgTarget -ne 'dsharness') -or $script:InAutoAccept -or [int]$script:FocusDepth -gt 0){ return }
   if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return }
   if($Cfg.AcceptAllEverySec -le 0 -or ((Get-Date)-$script:LastAutoAccept).TotalSeconds -lt $Cfg.AcceptAllEverySec){ return }
   $script:LastAutoAccept=Get-Date; $script:LastAccept=Get-Date; $script:InAutoAccept=$true
   try{ try{ [void](Try-AcceptAll -Report) }catch{ Log "Accept all: $($_.Exception.Message)" } } finally { $script:InAutoAccept=$false }
+}
+# пункт 51: сменить IDE-сторону — только когда работа остановлена (⏸ Стоп), с сохранением в relay_settings.json
+function Set-IdeTarget([string]$V,[string]$Source='pc'){
+  if(-not $V){ Tg-Send "IDE сейчас: $(Get-IdeName). Сменить: «ide antigravity» или «ide dsharness» (только при ⏸ Стоп)." | Out-Null; return }
+  if($V -eq $Cfg.AgTarget){ Tg-Send "IDE уже: $(Get-IdeName)." | Out-Null; return }
+  if(-not $script:Paused){ $m='⛔ IDE меняю только при «⏸ Стоп» — сначала остановите работу.'; Log $m; Tg-Send $m | Out-Null; return }
+  $Cfg.AgTarget=$V; $script:AgPending=$null; $script:AgBlock=$null
+  try{ Save-SettingValue $Cfg.SettingsFile 'AgTarget' $V }catch{ Log "IDE: не удалось сохранить в relay_settings.json ($($_.Exception.Message))" }
+  $m="🛠 IDE переключена: $(Get-IdeName)$(if($V -eq 'dsharness'){" (только через порт $($Cfg.DshCdpPort))"}) ($Source)"; Log $m; Tg-Send $m | Out-Null
+  try{ Write-Status -Force }catch{}
 }
 function Set-AutoAccept([bool]$On,[string]$Source='pc'){
   $Cfg.AutoAcceptAll=$On
@@ -995,7 +1019,7 @@ function Write-Status([switch]$Force){
       resumeAt= if($script:AutoPlan){ Format-PlanTime $script:AutoPlan.at } else { '' }; resumeWhy= if($script:AutoPlan){ [string]$script:AutoPlan.why } else { '' }
       lastAction= if($script:LastAction){ $script:LastAction.ToString('HH:mm:ss') } else { '' }
       pending=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -in @('sent','answered','resend','stale','operator') } | ForEach-Object { "$_ ($(Get-StageRu (Get-Stage $_)))" })
-      transport="Gemini=$($Cfg.GeminiTransport), AG=$($Cfg.AgTransport)"; autoAllow=[bool]$Cfg.AutoAllowPrompts; autoAccept=[bool]$Cfg.AutoAcceptAll
+      transport="Gemini=$($Cfg.GeminiTransport), AG=$($Cfg.AgTransport)"; autoAllow=[bool]$Cfg.AutoAllowPrompts; autoAccept=[bool]$Cfg.AutoAcceptAll; ide=[string]$Cfg.AgTarget; ideName=(Get-IdeName)
       quotaTime= if($q){ [string]$q.time } else { '' }
       gwebCur= if($q -and $q.gweb){ $q.gweb.cur } else { $null }; gwebWk= if($q -and $q.gweb){ $q.gweb.wk } else { $null }
       gwebCurReset= if($q -and $q.gweb){ [string]$q.gweb.curReset } else { '' }; gwebWkReset= if($q -and $q.gweb){ [string]$q.gweb.wkReset } else { '' }
@@ -1172,7 +1196,7 @@ function Ag-Rpc($method){
   foreach($c in Find-AgServers){ try{ $r=& $tryOne $c; $script:AgSrv=$c; return $r }catch{} }
   throw 'локальный сервер Antigravity не отвечает'
 }
-function Get-AgQuota{ ConvertFrom-AgQuota -Response (Ag-Rpc 'RetrieveUserQuotaSummary') -Group $Cfg.AgGroup -Refine { Ag-Rpc 'GetUserStatus' } }
+function Get-AgQuota{ if($Cfg.AgTarget -eq 'dsharness'){ return (Get-DshQuota) }; ConvertFrom-AgQuota -Response (Ag-Rpc 'RetrieveUserQuotaSummary') -Group $Cfg.AgGroup -Refine { Ag-Rpc 'GetUserStatus' } }
 function Get-GeminiWebUsage{ ConvertFrom-UsageText (Gem-GetUsageText) }
 function Quota-Text{
   if(!$script:Q){ return 'ещё не проверялись' }

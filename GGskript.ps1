@@ -4,7 +4,7 @@
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
 . (Join-Path $Root 'lib\Core.ps1'); Repair-PSModulePath
-foreach($f in 'State','Platform.Win','Uia','Telegram','Gemini.Uia','Gemini.Cdp','Gemini','Antigravity','Antigravity.Cdp','Relay','Chat','Shutdown'){ . (Join-Path $Root "lib\$f.ps1") }
+foreach($f in 'State','Platform.Win','Uia','Telegram','Gemini.Uia','Gemini.Cdp','Gemini','Antigravity','Antigravity.Cdp','DsHarness.Cdp','Relay','Chat','Shutdown'){ . (Join-Path $Root "lib\$f.ps1") }
 $ms=Merge-Settings -Defaults (Get-DefaultSettings -Root $Root) -OverridePath (Join-Path $Root 'relay_settings.json')
 $Cfg=$ms.Cfg
 $script:GGWorker=$true   # пункт 38: Test-StopNow смотрит и файл PAUSE
@@ -129,6 +129,17 @@ if($args -contains '-testgemini'){
     Log "  запросов в чате: $(GemUia-CountPrompts $h); последний отчёт: $(GemUia-LastReportPrompt $h)"
     $r=GemUia-FindCodeCopyButtonOnce $h; Log "  кнопка «Копировать код» блока '$($Cfg.CodeBlockLang)' в последнем ответе: $(if($r.btn){'найдена'}else{'НЕТ'})"
     $pk=GemUia-PeekAnswer $h; Log "  ответ после последнего запроса: $($pk.answered); блоки: $(Format-Langs $pk.labels); Markdown: $($pk.md); текст блока без копирования: $(if($pk.code){"$($pk.code.Length) симв., «$(Get-FirstLine $pk.code)»"}else{'не прочитан'})"
+  }
+  exit
+}
+# -testdsh — пункт 51: DeepSeek Harness через CDP (только чтение). -testdshsend "<текст>" — отправить одно сообщение и прочитать ответ.
+if($args -contains '-testdsh' -or $args -contains '-testdshsend'){
+  $tdD=Get-DshCdpDiag
+  Log "DeepSeek Harness CDP (порт $($tdD.port)): $(if($tdD.err){"ОШИБКА: $($tdD.err)"}else{"окно «$($tdD.chat)»; поле: $(([string]$tdD.field).Length) симв.; занят: $($tdD.busy); 429: $($tdD.limit.rate); контекст: $($tdD.limit.ctx)%; доступ: $($tdD.limit.access); модель: $($tdD.limit.model); $(@($tdD.limit.stats) -join ', ')"})"
+  $tdI=[array]::IndexOf($args,'-testdshsend')
+  if($tdI -ge 0 -and -not $tdD.err){
+    $tdT=[string]$args[$tdI+1]; if(-not $tdT){ $tdT='Тест связи GGskript: ответь одним словом OK' }
+    try{ DshCdp-Send -Text $tdT -Label 'тест связи'; $tdR=DshCdp-WaitReply 180; Log "  ответ Harness: $(if($tdR.ok){"«$($tdR.text)»"}else{"НЕТ — $($tdR.error)"})" }catch{ Log "  ОШИБКА отправки: $($_.Exception.Message)" }
   }
   exit
 }

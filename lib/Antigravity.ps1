@@ -44,6 +44,7 @@ function Get-AgHealth{
   $r
 }
 function Assert-AgReady{
+  if($Cfg.AgTarget -eq 'dsharness'){ return @{ ok=$true; kind='ok'; reasons=@() } }   # пункт 51: Harness — только CDP, окно не проверяю
   if($Cfg.AgTransport -eq 'mailbox'){ return }
   $hl=Get-AgHealth
   if($hl.kind -eq 'nowindow'){ throw (New-AgBlocked 'nowindow' 'Окно Antigravity не найдено (закрыто или перезапускается)' ($hl.reasons -join '; ')) }
@@ -210,6 +211,7 @@ function Ag-Send{
 }
 function Ag-SendCore{
   param([Parameter(Mandatory)][string]$Text,[string]$Label='',[string]$Name)
+  if($Cfg.AgTarget -eq 'dsharness'){ DshCdp-Send -Text $Text -Label $Label; return }   # пункт 51: без UIA-отката
   if($Cfg.AgTransport -eq 'mailbox'){ [void](AgMailbox-Send -Text $Text -Label $Label -Name $Name); return }
   if($Cfg.AgTransport -eq 'cdp' -and -not ($script:AgCdpDownUntil -and (Get-Date) -lt $script:AgCdpDownUntil -and $Cfg.AgCdpFallback)){
     try{
