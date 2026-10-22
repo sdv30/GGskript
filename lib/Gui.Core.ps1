@@ -47,7 +47,9 @@ function Send-GuiCmd([string]$Path,[string]$Text){
 }
 function Format-GuiLimits($j){
   $g= if($null -ne $j.gwebCur){ "Gemini сайт: исп. $($j.gwebCur)% (сброс $($j.gwebCurReset)); неделя $($j.gwebWk)% ($($j.gwebWkReset))" } else { 'Gemini сайт: —' }
-  $a= if($null -ne $j.agH5){ "Antigravity: 5ч ост. $($j.agH5)% (сброс $($j.agH5Reset)); неделя ост. $($j.agWk)% ($($j.agWkReset))" } else { 'Antigravity: —' }
+  $an= if($j.ideName){ [string]$j.ideName } else { 'Antigravity' }
+  if($j.ide -eq 'dsharness'){ $a="${an}: квота не публикуется" }
+  elseif($null -ne $j.agH5){ $a="${an}: 5ч ост. $($j.agH5)% (сброс $($j.agH5Reset)); неделя ост. $($j.agWk)% ($($j.agWkReset))" } else { $a="${an}: —" }
   if($j.quotaTime){ "Лимиты ($($j.quotaTime)) — $g | $a" } else { "Лимиты: $g | $a" }
 }
 function Get-GuiStateView($j){
@@ -119,6 +121,30 @@ function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true,[string]$Ide='Antig
   $v.Ide=$Ide; $v
 }
 # пункт 51: IDE-сторона для панели
+# пункт 52: все надписи панели, зависящие от IDE (Antigravity / DeepSeek Harness)
+function Get-IdeTexts([string]$Target='antigravity',[int]$AgPort=9333,[int]$DshPort=9334){
+  $d= $Target -eq 'dsharness'
+  $N= if($d){'DeepSeek Harness'}else{'Antigravity'}; $S= if($d){'Harness'}else{'Antigravity'}; $P= if($d){$DshPort}else{$AgPort}
+  [ordered]@{
+    Name=$N; Short=$S; Port=$P
+    Fwd="📂 Ответ в $S"; FwdTip="Весь последний ответ Gemini в $N (спрошу подтверждение)"
+    FwdConfirm="Переслать в $N ВЕСЬ последний ответ Gemini целиком (не только блок Markdown)?"
+    AgT="🛠 ${S}: текст"; AgTTip="Ввести текст → в $N; ответом будет новый отчёт агента (покажу в журнале)"
+    AgTHint="Текст для агента $N. Ответом будет его новый отчёт в Downloads — покажу в журнале. Ctrl+Enter — отправить."
+    LimTip="Проверить лимиты Gemini и $N"
+    Auto="Автоподтверждение запросов $S"
+    AutoTip= if($d){'Сам отвечает «Разрешить один раз» на запросы разрешения агента Harness (через порт). Никогда — «всегда», «Запретить», «Отклонить».'}else{'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.'}
+    Acc= if($d){'Автопринятие «Принять все»'}else{'Автопринятие Accept all'}
+    AccTip="Когда агент $N закончил работу, сам нажимает «$(if($d){'Принять все'}else{'Accept all'})» (через порт, без мыши). Отклонить — никогда."
+    Cdp="🛠 $S с портом"
+    CdpTip= if($d){"Перезапустить DeepSeek Harness с портом $P (спрошу подтверждение): закрою все его процессы, включая трей, и запущу с портом."}else{"Перезапустить Antigravity с портом $P (спрошу подтверждение). С портом — без мыши и автоподтверждение надёжнее."}
+    CdpConfirm= if($d){"Перезапустить DeepSeek Harness с портом отладки ${P}?`n`nВсе процессы Harness (и значок в трее) будут закрыты, затем он откроется с портом.`nТекущий ответ агента, если он идёт, прервётся."}else{"Перезапустить Antigravity с портом отладки ${P}?`n`nAntigravity закроется (как File → Exit) и сразу откроется снова. Несохранённые файлы он предложит сохранить.`nПосле перезапуска откройте прошлый разговор: значок часов → последний → Open in current window.`n`nСовет: сначала нажмите «⏸ Стоп», после перезапуска — «▶️ Старт»."}
+    MenuHead=$S.ToUpper(); Accept= if($d){'✅ Принять «Принять все»'}else{'✅ Принять «Accept all»'}
+    TileTip="IDE: $N. Нажмите, чтобы выбрать Antigravity или DeepSeek Harness (только при «⏸ Стоп»)."
+  }
+}
+# Кнопка с эмодзи-картинкой (New-Btn): текст без эмодзи
+function Get-BtnPlainText([string]$Text){ if($Text -match '^(\S+)\s+(.+)$' -and $matches[1] -cnotmatch '[A-Za-zА-Яа-яЁё]'){ $matches[2] } else { $Text } }
 function Get-IdeChoices{ @([ordered]@{ v='antigravity'; t='Antigravity' }, [ordered]@{ v='dsharness'; t='DeepSeek Harness' }) }
 function Get-DshExe{ Find-FirstPath @("$env:LOCALAPPDATA\Programs\DeepSeek Harness\DeepSeek Harness.exe") }
 function Get-DshDebugArgs([int]$Port){ @("--remote-debugging-port=$Port","--remote-allow-origins=http://127.0.0.1:$Port") }

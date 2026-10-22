@@ -112,13 +112,16 @@ $script:TgMenu=@(
   @('shutdown','⏻ Выключить компьютер'),
   @('windows','🪟 Авто-закрываемые окна'),
   @('help','❓ Справка'))
-function Get-TgMenuCommands{ @($script:TgMenu | ForEach-Object { [ordered]@{ command=$_[0]; description=$_[1] } }) }
+# пункт 52: подписи по выбранной IDE (Antigravity → Harness / DeepSeek Harness)
+function Convert-TgIdeText([string]$T,[switch]$Short){ if([string]$Cfg.AgTarget -ne 'dsharness'){ return $T }; $T.Replace('Accept all','Принять все').Replace('Antigravity',$(if($Short){'Harness'}else{'DeepSeek Harness'})) }
+function Get-TgReplyButtons{ Convert-TgIdeText $script:TgReplyButtons -Short }
+function Get-TgMenuCommands{ @($script:TgMenu | ForEach-Object { [ordered]@{ command=$_[0]; description=(Convert-TgIdeText $_[1]) } }) }
 function Register-TgCommands{
   if(!$script:TgToken){ return $false }
   try{ Invoke-Tg 'setMyCommands' @{ commands=@(Get-TgMenuCommands) } 15 | Out-Null; $true }catch{ Log "Telegram setMyCommands: $($_.Exception.Message)" -NoAction; $false }
 }
-function Get-TgReplyLabels([string]$Spec=$script:TgReplyButtons){ @(($Spec -split '[;|]') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
-function New-TgReplyKeyboard([string]$Spec=$script:TgReplyButtons){
+function Get-TgReplyLabels([string]$Spec=(Get-TgReplyButtons)){ @(($Spec -split '[;|]') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+function New-TgReplyKeyboard([string]$Spec=(Get-TgReplyButtons)){
   $kb=New-Object System.Collections.ArrayList
   foreach($r in ($Spec -split ';')){ if(-not $r.Trim()){ continue }
     $row=New-Object System.Collections.ArrayList

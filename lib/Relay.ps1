@@ -956,7 +956,7 @@ function Set-IdeTarget([string]$V,[string]$Source='pc'){
   if(-not $script:Paused){ $m='⛔ IDE меняю только при «⏸ Стоп» — сначала остановите работу.'; Log $m; Tg-Send $m | Out-Null; return }
   $Cfg.AgTarget=$V; $script:AgPending=$null; $script:AgBlock=$null
   try{ Save-SettingValue $Cfg.SettingsFile 'AgTarget' $V }catch{ Log "IDE: не удалось сохранить в relay_settings.json ($($_.Exception.Message))" }
-  $m="🛠 IDE переключена: $(Get-IdeName)$(if($V -eq 'dsharness'){" (только через порт $($Cfg.DshCdpPort))"}) ($Source)"; Log $m; Tg-Send $m | Out-Null
+  $m="🛠 IDE переключена: $(Get-IdeName)$(if($V -eq 'dsharness'){" (только через порт $($Cfg.DshCdpPort))"}) ($Source)"; Log $m; try{ [void](Register-TgCommands) }catch{}; try{ Tg-Send $m -Markup (Get-TgReplyMarkup) | Out-Null }catch{ Tg-Send $m | Out-Null }
   try{ Write-Status -Force }catch{}
 }
 function Set-AutoAccept([bool]$On,[string]$Source='pc'){

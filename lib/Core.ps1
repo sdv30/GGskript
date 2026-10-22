@@ -581,7 +581,7 @@ function Parse-Command{
   if(-not $t){ return @{k='unknown'} }
   $n=($t.ToLower() -replace 'ё','е')
   $gem='(?:дж?[еиы]м[еиы]н[иы]\w*|г[еи]м[еи]н[иы]\w*|gemini\w*|аргон\w*|старш\w*)'
-  $ag='(?:анти\s*-?\s*гр\w*|antigravity\w*|младш\w*)'
+  $ag='(?:анти\s*-?\s*гр\w*|antigravity\w*|младш\w*|(?:deepseek\s+)?harness\w*|харнес\w*)'
   $verb='(?:напиши|написать|отправь|отправить|скажи|спроси|передай|пошли)'
   $end='\s*[.!]*\s*$'
   # кнопки «Gemini: текст» / «Antigravity: текст» и /gemini, /ag без текста — бот попросит текст
