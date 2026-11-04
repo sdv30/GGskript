@@ -177,9 +177,9 @@ stateDiagram-v2
 
 Приложения запускаются с портом кнопками панели («🌐 Chrome с портом», «🛠 <IDE> с портом»). IDE выбирается `AgTarget` (`antigravity` | `dsharness` | `cursor`, сохраняется в `relay_settings.json`) — выпадающим списком на правой плитке индикатора хода или командой `ide …`, только в режиме Стоп.
 
-## 11. Контракт с промптами
+## 11. Разбор ответов моделей (формат из промптов)
 
-Код опирается на формат, который задают `prompts\ARGON_SYSTEM_PROMPT.md` и `prompts\FLASH_SYSTEM_PROMPT.md` (подробно — README, «Промпты — часть системы»):
+GGskript разбирает ответы моделей по формату, который задают `prompts\ARGON_SYSTEM_PROMPT.md` и `prompts\FLASH_SYSTEM_PROMPT.md` (кратко — README, «Что должно быть в ответах моделей»). Блок ответа Gemini считается законченным после `GeminiQuietSec` (8 с) без изменений, папка отчётов опрашивается каждые `PollSec` (3 с), файл берётся, когда не меняется `StableSec` (3 с).
 
 - последний блок кода с подписью из `CodeBlockLang` → `Get-BlockAsk` = `Get-PromptHeader` (заголовок `[Project] [S<N>]` / `[Project] [REWORK S<N>]` в первых 4 строках, либо step id `Project_YYYY-MM-DD_NNN` в первых 6) → иначе `Get-AskedReportFromText` (имя `…_NNN.md` в тексте);
 - отчёты в `Downloads` по `Pattern` → `Get-ReportCandidates` (фильтр по проекту и возрасту, сортировка по времени файла и номеру) → `Get-ActiveProject`;
