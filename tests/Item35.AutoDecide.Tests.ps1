@@ -32,16 +32,29 @@ Describe 'Пункт 35: автоматический поток решает с
     Mock Gem-FindFile { $null }; $script:SendNotBefore['Arena_2026-10-20_003.md']=(Get-Date).AddSeconds(60)
     Process-File $script:F; $script:GemSent | Should -Be 0
   }
-  It 'после паузы: пользователь отправил вручную (имя — упоминание, содержимое — последний запрос) — НЕ дублирую, беру ответ' {
-    Mock Gem-FindFile { if($Name){ @{ how='name'; index=2; last=$true } } else { @{ how='content'; index=4; last=$true } } }
+  It 'после паузы: пользователь отправил вручную (содержимое — последний запрос) — НЕ дублирую, беру ответ' {
+    Mock Gem-FindFile { if($Name){ @{ how='name'; index=2; last=$true; attached=$false } } else { @{ how='content'; index=4; last=$true; attached=$false } } }
     $script:SendNotBefore['Arena_2026-10-20_003.md']=(Get-Date).AddSeconds(-1); $script:AutoSend['Arena_2026-10-20_003.md']=$true
     Process-File $script:F
     $script:GemSent | Should -Be 0; Get-Stage 'Arena_2026-10-20_003.md' | Should -BeIn @('sent','answered','relayed'); Should -Invoke Gem-CopyCode -Times 1
   }
-  It 'после паузы: только упоминание имени, содержимого нет — отправляю сам' {
-    Mock Gem-FindFile { if($Name){ @{ how='name'; index=2; last=$true } } else { $null } }
+  It 'после паузы: только слабое UIA-совпадение имени (не чип), содержимого нет — отправляю сам' {
+    Mock Gem-FindFile { if($Name){ @{ how='name'; index=2; last=$true; attached=$false } } else { $null } }
     $script:SendNotBefore['Arena_2026-10-20_003.md']=(Get-Date).AddSeconds(-1)
     Process-File $script:F; $script:GemSent | Should -Be 1
+  }
+
+  It 'после паузы: реальное вложение (CDP chip, attached) — НЕ дублирую даже без содержимого' {
+    Mock Gem-FindFile { @{ how='name'; index=2; last=$true; attached=$true } }
+    $script:SendNotBefore['Arena_2026-10-20_003.md']=(Get-Date).AddSeconds(-1); $script:AutoSend['Arena_2026-10-20_003.md']=$true
+    Process-File $script:F
+    $script:GemSent | Should -Be 0; Get-Stage 'Arena_2026-10-20_003.md' | Should -BeIn @('sent','answered','relayed')
+  }
+  It 'Gemini генерирует ответ на этот отчёт — не прикрепляю повторно' {
+    Mock Gem-FindFile { $null }; Mock Gem-IsGenerating { $true }; Mock Gem-LastReportPrompt { 'Arena_2026-10-20_003.md' }
+    $script:SendNotBefore['Arena_2026-10-20_003.md']=(Get-Date).AddSeconds(-1)
+    Process-File $script:F
+    $script:GemSent | Should -Be 0; Get-Stage 'Arena_2026-10-20_003.md' | Should -BeIn @('sent','answered','relayed')
   }
   It 'авто-resend (был sent, чат сменился) — тоже перепроверяю содержимое' {
     $script:St.files['Arena_2026-10-20_003.md']=[ordered]@{ stage='resend'; time='2026-10-20 22:44:00'; hash=''; attempts=1; note='' }

@@ -45,9 +45,11 @@ $script:AgJs=@'
       const busy=qa(S.busy).some(vis);
       const fl=qa('span[data-tooltip-id="toolbar-title-tooltip"]').filter(vis).map(e=>norm(txt(e))).find(t=>/files? with changes/i.test(t))||'';
       const m=fl.match(/(\d+)\s+files?/i), files=m?parseInt(m[1],10):null;
-      const cand=qa('span,button,[role="button"]').filter(x=>vis(x)&&enabled(x)&&/^accept all$/i.test(norm(txt(x)))&&!/reject|отклон/i.test(norm(txt(x)))&&!x.querySelector('span,button'));
+      // 25.10: никогда не кнопка отмены/остановки (isStop, селектор busy) и не элемент внутри неё
+      const cand=qa('span,button,[role="button"]').filter(x=>vis(x)&&enabled(x)&&/^accept all$/i.test(norm(txt(x)))&&!/reject|отклон/i.test(norm(txt(x)))&&!x.querySelector('span,button')&&!isStop(x)&&!qa(S.busy).some(b=>b===x||b.contains(x)));
       if(!cand.length) return { found:false, busy, files };
-      if(busy) return { found:true, ok:false, busy, files, why:'агент ещё работает' };
+      // 25.10 (пожелание пользователя): evenBusy — жать сразу, и пока агент работает
+      if(busy && !(arg&&arg.evenBusy)) return { found:true, ok:false, busy, files, why:'агент ещё работает' };
       if(arg.dry) return { found:true, ok:false, busy, files, why:'dry' };
       cand[0].click(); return { found:true, ok:true, busy, files }; }
     case 'body': return document.body?txt(document.body):'';
@@ -123,7 +125,7 @@ function AgCdp-IsBusy{ [bool](AgEval-Js 'busy') }
 function AgCdp-HasButton([string]$Rx){ [bool]@(AgEval-Js 'buttons' @{ rx=$Rx }).Count }
 function AgCdp-ClickText([string]$Rx){ [bool](AgEval-Js 'clickText' @{ rx=$Rx }) }
 # «Accept all» (span с onClick) через DOM: @{found;ok;busy;files;why}. -Dry — только посмотреть.
-function AgCdp-AcceptAll([switch]$Dry){ AgEval-Js 'acceptAll' @{ dry=[bool]$Dry } }
+function AgCdp-AcceptAll([switch]$Dry,[switch]$EvenBusy){ AgEval-Js 'acceptAll' @{ dry=[bool]$Dry; evenBusy=[bool]$EvenBusy } }
 # Автоподтверждение через DOM (без фокуса): @{found;ok;opt;title;why}
 function AgCdp-AllowPrompt{ AgEval-Js 'allowPrompt' @{ opt=$Cfg.AutoAllowOptionRx; sub=$Cfg.AutoAllowSubmitRx; deny=($script:AutoAllowDenyRx -replace '^\(\?i\)','') } }
 # Отправка в чат агента. Те же гарантии, что у AgUia-Send: чужой/меняющийся текст — не трогаю; Enter — только когда наш текст в поле.

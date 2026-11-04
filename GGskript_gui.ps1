@@ -25,7 +25,7 @@ function Start-Worker{
   Remove-Item -LiteralPath $Cfg.StopFile -EA 0
   Start-Process powershell -WindowStyle Hidden -WorkingDirectory $dir -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',('"'+$Worker+'"')
 }
-function Get-IdeLabel{ if([string]$Cfg.AgTarget -eq 'dsharness'){ 'DeepSeek Harness' } else { 'Antigravity' } }
+function Get-IdeLabel{ switch([string]$Cfg.AgTarget){ 'dsharness'{'DeepSeek Harness'} 'cursor'{'Cursor'} default{'Antigravity'} } }
 function Send-Cmd($text){ if($script:RenderOut){ return }; [void](Send-GuiCmd -Path $Cfg.CmdFile -Text $text) }
 
 # ---- форма ----
@@ -34,18 +34,21 @@ $mono=New-Object System.Drawing.Font('Consolas',9.5)
 $form=New-Object System.Windows.Forms.Form
 $form.AutoScaleMode=[System.Windows.Forms.AutoScaleMode]::Dpi
 $form.Text='GGskript'; $form.Font=$font
-$form.Size=New-Object System.Drawing.Size(820,708)
-$form.MinimumSize=New-Object System.Drawing.Size(700,620)
+$form.Size=New-Object System.Drawing.Size(820,780)
+$form.MinimumSize=New-Object System.Drawing.Size(760,740)   # 27.10: ниже кнопки не помещаются в строку и журналу не остаётся места
 $form.StartPosition='CenterScreen'
 try{ if(Test-Path -LiteralPath $IcoF){ $form.Icon=New-Object System.Drawing.Icon($IcoF) } }catch{}
 $form.TopMost=$false
 
-$pnlTop=New-Object System.Windows.Forms.TableLayoutPanel
-$pnlTop.Dock='Top'; $pnlTop.AutoSize=$true; $pnlTop.ColumnCount=1; $pnlTop.Padding=New-Object System.Windows.Forms.Padding(8,6,8,6); $pnlTop.BackColor=[System.Drawing.Color]::FromArgb(245,245,248)
+# 27.10 (sendfix): наверху ОДНА строка состояния (с переносом, высота подстраивается под ширину окна — Fit-Layout).
+# Модель / проект / лимиты / последнее действие в верхнюю часть не выводятся — они пишутся строкой «ℹ» в журнал (Add-InfoLog) при изменении.
+$pnlTop=New-Object System.Windows.Forms.Panel
+$pnlTop.Dock='Top'; $pnlTop.Height=40; $pnlTop.Padding=New-Object System.Windows.Forms.Padding(10,6,10,6); $pnlTop.BackColor=[System.Drawing.Color]::FromArgb(245,245,248)
 function New-Lbl($t){ $l=New-Object System.Windows.Forms.Label; $l.AutoSize=$true; $l.Text=$t; $l.Margin=New-Object System.Windows.Forms.Padding(3,2,3,2); $l }
-$lblState=New-Lbl 'Состояние: …'; $lblState.Font=New-Object System.Drawing.Font('Segoe UI',12,[System.Drawing.FontStyle]::Bold)
-$lblModel=New-Lbl 'Модель: —'; $lblFile=New-Lbl 'Файл/этап: —'; $lblLim=New-Lbl 'Лимиты: —'; $lblAct=New-Lbl ''; $lblAct.ForeColor=[System.Drawing.Color]::Gray
-$pnlTop.Controls.AddRange(@($lblState,$lblModel,$lblFile,$lblLim,$lblAct))
+$lblState=New-Object System.Windows.Forms.Label; $lblState.Text='Состояние: …'; $lblState.AutoSize=$false; $lblState.Dock='Fill'; $lblState.UseCompatibleTextRendering=$false
+$lblState.Font=New-Object System.Drawing.Font('Segoe UI',11,[System.Drawing.FontStyle]::Bold)
+$lblModel=New-Lbl ''; $lblFile=New-Lbl ''; $lblLim=New-Lbl ''; $lblAct=New-Lbl ''   # не показываются (оставлены для совместимости присваиваний)
+$pnlTop.Controls.Add($lblState)
 
 # ---- кнопки: те же 11, что в Telegram, по группам; всё остальное — в меню «☰ Ещё» ----
 $btnFont=New-Object System.Drawing.Font('Segoe UI',9.75)
@@ -88,8 +91,10 @@ $btnPause=New-Btn '⏸ Стоп' 'Полная остановка: прерыв�
 $btnStart=New-Btn '▶️ Старт' 'Запустить или продолжить работу'
 $btnShot=New-Btn '📸 Скрин' 'Снимок экрана в Telegram'
 $btnLim=New-Btn '📊 Лимиты' 'Проверить лимиты Gemini и Antigravity'
-$btnHelp=New-Btn '❓ Помощь' 'Список команд (в Telegram)'
+$btnAcct=New-Btn '🔄 Сменил аккаунт' 'Сменили аккаунт Google в Chrome: сбросить соединение с Gemini, заново выбрать вкладку, перечитать лимит и модель. Лимит в норме — верну Argon и продолжу сам; иначе напишу причину в журнал.'
+$btnHelp=New-Btn '❓ Помощь' 'Открыть подробную справку (docs\HELP.txt в Блокноте; нет — README.md) и прислать список команд в Telegram'
 $btnMore=New-Btn '☰ Ещё ▾' 'Остальные команды'
+$btnExit=New-Btn '⛔ Выключить скрипт' 'Завершить воркер GGskript совсем (спрошу подтверждение). Работает всегда, даже посреди действия: файл STOP, а если воркер не завершится за 8 с — процесс принудительно.'; $btnExit.ForeColor=[System.Drawing.Color]::Red
 $btnStart.ForeColor=[System.Drawing.Color]::ForestGreen; $btnPause.ForeColor=[System.Drawing.Color]::DarkOrange; $btnMore.ForeColor=$accent
 $chkAuto=New-Object System.Windows.Forms.CheckBox; $chkAuto.Text='Автоподтверждение запросов Antigravity'; $chkAuto.Font=$btnFont; $chkAuto.AutoSize=$true; $chkAuto.Margin=New-Object System.Windows.Forms.Padding(6,8,3,2)
 $chkAuto.Checked=[bool]$Cfg.AutoAllowPrompts
@@ -101,6 +106,8 @@ Add-BtnRow 'ФАЙЛЫ' @($btnRep,$btnFwd)
 Add-BtnRow 'ТЕКСТ И ОТВЕТЫ' @($btnAgT,$btnGmT,$btnAns)
 Add-BtnRow 'УПРАВЛЕНИЕ' @($btnStat,$btnPause,$btnStart)
 Add-BtnRow 'ПРОЧЕЕ' @($btnShot,$btnLim,$btnHelp)
+Add-BtnRow 'АККАУНТ' @($btnAcct)
+Add-BtnRow 'ВЫКЛЮЧЕНИЕ' @($btnExit)
 Add-BtnRow '' @($btnMore,$chkAuto,$chkAcc)
 # ---- пункт 39: режим без мыши (порты отладки) ----
 $btnCdpG=New-Btn '🌐 Chrome с портом' 'Открыть отдельный Chrome для Gemini с портом 9222 (обычный Chrome/Яндекс не закрываю). С портом скрипт работает без мыши.' 200
@@ -129,7 +136,7 @@ $miExit=Add-Mi '⛔ Выключить скрипт' $null; $miExit.ForeColor=[S
 $menu.Add_Opening({ $miAuto.Text= if($chkAuto.Checked){ '☑ Автоподтверждение: ВКЛ' } else { '☐ Автоподтверждение: выкл' } })
 # пункт 52: все надписи, зависящие от IDE
 function Apply-IdeTexts{
-  $x=Get-IdeTexts ([string]$Cfg.AgTarget) ([int]$Cfg.AgCdpPort) ([int]$Cfg.DshCdpPort); $script:ideTx=$x
+  $x=Get-IdeTexts ([string]$Cfg.AgTarget) ([int]$Cfg.AgCdpPort) ([int]$Cfg.DshCdpPort) ([int]$(if($Cfg.CursorCdpPort){$Cfg.CursorCdpPort}else{9335})); $script:ideTx=$x
   $btnFwd.Text=Get-BtnPlainText $x.Fwd; $tip.SetToolTip($btnFwd,$x.FwdTip)
   $btnAgT.Text=Get-BtnPlainText $x.AgT; $tip.SetToolTip($btnAgT,$x.AgTTip)
   $tip.SetToolTip($btnLim,$x.LimTip); $chkAuto.Text=$x.Auto; $tip.SetToolTip($chkAuto,$x.AutoTip); $chkAcc.Text=$x.Acc; $tip.SetToolTip($chkAcc,$x.AccTip)
@@ -143,11 +150,14 @@ $pnlCmd=New-Object System.Windows.Forms.Panel
 $pnlCmd.Dock='Bottom'; $pnlCmd.Height=40; $pnlCmd.Padding=New-Object System.Windows.Forms.Padding(8,6,8,6)
 $txtCmd=New-Object System.Windows.Forms.TextBox; $txtCmd.Dock='Fill'; $txtCmd.Font=$font
 $btnSend=New-Object System.Windows.Forms.Button; $btnSend.Text='Отправить'; $btnSend.Dock='Right'; $btnSend.Width=100
-$pnlCmd.Controls.Add($txtCmd); $pnlCmd.Controls.Add($btnSend)
+# 02.11 (logclear): маленькая ссылка «очистить журнал» слева от поля команды
+$lnkClear=New-Object System.Windows.Forms.LinkLabel; $lnkClear.Text='очистить журнал'; $lnkClear.AutoSize=$false; $lnkClear.Width=118; $lnkClear.Dock='Left'; $lnkClear.TextAlign='MiddleLeft'
+$lnkClear.Font=New-Object System.Drawing.Font('Segoe UI',8.5); $lnkClear.LinkColor=[System.Drawing.Color]::FromArgb(90,110,140); $lnkClear.ActiveLinkColor=[System.Drawing.Color]::FromArgb(40,90,170); $lnkClear.LinkBehavior='HoverUnderline'; $lnkClear.TabStop=$false
+$pnlCmd.Controls.Add($txtCmd); $pnlCmd.Controls.Add($btnSend); $pnlCmd.Controls.Add($lnkClear)
 
 $txtLog=New-Object System.Windows.Forms.RichTextBox
 $txtLog.Dock='Fill'; $txtLog.ReadOnly=$true; $txtLog.Font=$mono; $txtLog.BackColor=[System.Drawing.Color]::FromArgb(24,24,28); $txtLog.ForeColor=[System.Drawing.Color]::Gainsboro
-$txtLog.WordWrap=$false; $txtLog.ScrollBars='Both'; $txtLog.DetectUrls=$false
+$txtLog.WordWrap=$true; $txtLog.ScrollBars='Vertical'; $txtLog.DetectUrls=$false   # 27.10: перенос строк — журнал всегда целиком по ширине окна
 
 # ---- пункт 41: индикатор «чей ход» (плитки Gemini / Antigravity, анимированная стрелка) ----
 if(-not ('GG.TurnPanel' -as [type])){
@@ -225,30 +235,81 @@ function Set-TurnView($v){
   if(-not $old -or $old.Caption -ne $v.Caption -or $old.Ide -ne $v.Ide -or $old.G -ne $v.G -or $old.A -ne $v.A){ $pnlTurn.Invalidate() }
 }
 $form.Controls.Add($txtLog); $form.Controls.Add($pnlCmd); $form.Controls.Add($pnlBtn); $form.Controls.Add($pnlTop); $form.Controls.Add($pnlTurn)
+# 27.10 (sendfix): подстройка под ширину окна при любом размере: высота строки состояния по переносу текста, индикаторы портов переносятся, а не обрезаются.
+function Fit-Layout{
+  try{
+    $w=[Math]::Max(60,$pnlTop.ClientSize.Width-$pnlTop.Padding.Horizontal)
+    $fl=[System.Windows.Forms.TextFormatFlags]::WordBreak -bor [System.Windows.Forms.TextFormatFlags]::NoPadding -bor [System.Windows.Forms.TextFormatFlags]::TextBoxControl
+    $sz=[System.Windows.Forms.TextRenderer]::MeasureText([string]$lblState.Text,$lblState.Font,(New-Object System.Drawing.Size($w,0)),$fl)
+    $h=[Math]::Min([int]$sz.Height,$lblState.Font.Height*4)+$pnlTop.Padding.Vertical+4
+    if($pnlTop.Height -ne $h){ $pnlTop.Height=$h }
+    foreach($l in $lblCdpG,$lblCdpA){ if($l.Parent){ $l.AutoSize=$true; $l.MaximumSize=New-Object System.Drawing.Size([Math]::Max(120,$l.Parent.ClientSize.Width-14),0) } }
+  }catch{}
+}
+$form.Add_Resize({ Fit-Layout })
+$pnlBtn.Add_SizeChanged({ Fit-Layout })
 
 # ---- хвост лога ----
 $script:logPos=-1
+# 27.10 (colors): строки журнала раскрашиваются по уровню (Get-LogLevel). Добавляются только НОВЫЕ строки, подряд идущие одного уровня — одним куском;
+# длина журнала ограничена (с головы убирается целое число строк, цвета остальных сохраняются).
+$script:logPrevLevel='info'; $script:LogMax=250000; $script:LogKeep=150000
+function Add-LogLines([string]$Text){
+  if(-not $Text){ return }
+  try{
+    $lines=@($Text -split "\r?\n"); while($lines.Count -and -not [string]$lines[$lines.Count-1]){ $lines=@($lines | Select-Object -First ($lines.Count-1)) }
+    if(-not $lines.Count){ return }
+    $atEnd=Test-AtEnd $txtLog.SelectionStart $txtLog.TextLength
+    $lv=Get-LogLevels $lines $script:logPrevLevel
+    $i=0
+    while($i -lt $lines.Count){
+      $j=$i; $sb=New-Object System.Text.StringBuilder
+      while($j -lt $lines.Count -and $lv[$j] -eq $lv[$i]){ [void]$sb.Append([string]$lines[$j]).Append("`r`n"); $j++ }
+      $c=Get-LogColor $lv[$i]
+      $col=[System.Drawing.Color]::FromArgb($c[0],$c[1],$c[2]); $st=$txtLog.TextLength
+      $txtLog.SelectionStart=$st; $txtLog.SelectionLength=0; $txtLog.SelectionColor=$col
+      $txtLog.AppendText($sb.ToString())
+      # цвет ставлю и на весь добавленный кусок: после эмодзи (⚠️) RichEdit сбрасывал цвет на следующих строках того же куска
+      $txtLog.Select($st,$txtLog.TextLength-$st); $txtLog.SelectionColor=$col; $i=$j
+    }
+    $script:logPrevLevel=$lv[$lines.Count-1]; $txtLog.SelectionStart=$txtLog.TextLength; $txtLog.SelectionLength=0; $txtLog.SelectionColor=$txtLog.ForeColor
+    if($txtLog.TextLength -gt $script:LogMax){
+      $cut=Get-LogTrimCount $txtLog.Text $script:LogMax $script:LogKeep
+      if($cut -gt 0){ $txtLog.ReadOnly=$false; try{ $txtLog.Select(0,$cut); $txtLog.SelectedText='' } finally { $txtLog.ReadOnly=$true }; $atEnd=$true }   # в режиме ReadOnly SelectedText не удаляет
+    }
+    if($atEnd){ $txtLog.SelectionStart=$txtLog.TextLength; $txtLog.SelectionLength=0; $txtLog.ScrollToCaret() }
+  }catch{}
+}
+# 02.11 (logclear): очистить окно журнала и начать новый relay_log.txt (прежний — в logs\…_cleared.txt). Воркер дописывает в новый файл сам.
+function Clear-PanelLog{
+  try{ if(-not $script:RenderOut){ [void](Invoke-LogArchive -Path $Cfg.LogFile -Dir (Join-Path $dir 'logs') -Keep 10 -Suffix '_cleared') } }catch{}
+  $txtLog.Clear(); $script:logPos=0; $script:logPrevLevel='info'; $script:infoKey=''
+}
 function Load-LogTail{
   try{
+    if($script:logPos -gt 0){ $len=0; try{ $len=(Get-Item -LiteralPath $Cfg.LogFile -EA Stop).Length }catch{}; if($len -lt $script:logPos){ $txtLog.Clear(); $script:logPos=0 } }   # 02.11: файл начат заново (новый запуск/очистка) — окно тоже с чистого листа
     $r=Read-LogTail -Path $Cfg.LogFile -Pos $script:logPos; $script:logPos=$r.Pos
     if($r.Text){
-      $atEnd=Test-AtEnd $txtLog.SelectionStart $txtLog.TextLength
-      $txtLog.AppendText($r.Text)
-      if($txtLog.TextLength -gt 400000){ $txtLog.Text=$txtLog.Text.Substring($txtLog.TextLength-300000); $atEnd=$true }
-      if($atEnd){ $txtLog.SelectionStart=$txtLog.TextLength; $txtLog.ScrollToCaret() }
+      Add-LogLines $r.Text
     }
+  }catch{}
+}
+# 27.10 (sendfix): модель / проект / лимиты — строкой «ℹ» в журнал (только в окне панели, relay_log.txt не трогаю), и только когда что-то изменилось
+$script:infoKey=''
+function Add-InfoLog([string]$Text){
+  try{
+    Add-LogLines "▸ $(Get-Date -Format 'HH:mm:ss')  $Text"
   }catch{}
 }
 function Update-Status{
   if(-not (Worker-Alive)){
-    $lblState.Text='Состояние: воркер не запущен'; $lblState.ForeColor=[System.Drawing.Color]::DimGray
-    $lblModel.Text='Модель: —'; $lblFile.Text='Нажмите «Старт», чтобы запустить передачу.'; $lblLim.Text='Лимиты: —'; $lblAct.Text=''
+    $lblState.Text='Состояние: воркер не запущен — нажмите «Старт»'; $lblState.ForeColor=[System.Drawing.Color]::DimGray; Fit-Layout
     Set-TurnView (Get-TurnView 'off' $false (Get-IdeLabel)); return
   }
   try{
     $j=[IO.File]::ReadAllText($Cfg.StatusFile,[Text.Encoding]::UTF8) | ConvertFrom-Json; $v=Get-GuiStateView $j
-    $lblState.Text=$v.State; $lblState.ForeColor=[System.Drawing.Color]::FromName($v.Color)
-    $lblModel.Text=$v.Model; $lblFile.Text=$v.File; $lblLim.Text=$v.Limits; $lblAct.Text=$v.Action
+    $lblState.Text=$v.State; $lblState.ForeColor=[System.Drawing.Color]::FromName($v.Color); Fit-Layout
+    $ik="$($v.Model)|$($v.File)|$($v.Limits)"; if($ik -ne $script:infoKey){ $script:infoKey=$ik; Add-InfoLog "$($v.Model) | $($v.File)`r`n   $($v.Limits)" }
     $tn= if($j.turn){ [string]$j.turn } else { Get-RelayTurn -Kind ([string]$j.kind) }; Set-TurnView (Get-TurnView $tn $true $(if($j.ideName){[string]$j.ideName}else{Get-IdeLabel}))
     if($j.ide -and [string]$j.ide -ne [string]$Cfg.AgTarget -and ((Get-Date)-$script:ideAt).TotalSeconds -gt 8){ $Cfg.AgTarget=[string]$j.ide; Apply-IdeTexts }
     if($null -ne $j.autoAccept -and ((Get-Date)-$script:chkAccAt).TotalSeconds -gt 5 -and $chkAcc.Checked -ne [bool]$j.autoAccept){ $script:chkSync=$true; $chkAcc.Checked=[bool]$j.autoAccept; $script:chkSync=$false }
@@ -277,11 +338,30 @@ function Confirm-Gui([string]$msg){ ([System.Windows.Forms.MessageBox]::Show($fo
 
 $btnStart.Add_Click({ Remove-Item -LiteralPath $Cfg.PauseFile -EA 0; if(-not (Worker-Alive)){ Start-Worker } else { Send-Cmd 'старт' } })
 $btnPause.Add_Click({ try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}; Send-Cmd 'стоп'; Set-TurnView (Get-TurnView 'stopped' $true (Get-IdeLabel)); $lblState.Text='Состояние: ⏸ Остановлен — ничего не делаю'; $lblState.ForeColor=[System.Drawing.Color]::DarkOrange })
-$miExit.Add_Click({
+$script:doExit={
   $r=[System.Windows.Forms.MessageBox]::Show($form,"Выключить GGskript (воркер) совсем? Из Telegram запустить снова будет нельзя — только кнопкой «Старт» здесь или ярлыком.`nЧтобы просто остановиться и слушать Telegram — кнопка «Стоп».",'GGskript',[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Warning)
-  if($r -eq 'Yes'){ try{ New-Item -ItemType File $Cfg.StopFile -Force | Out-Null }catch{} }
-})
-$btnLim.Add_Click({ Send-Cmd 'лимиты' }); $btnStat.Add_Click({ Send-Cmd 'статус' }); $btnShot.Add_Click({ Send-Cmd 'скрин' }); $btnHelp.Add_Click({ Send-Cmd 'помощь' })
+  if($r -eq 'Yes'){
+    try{ New-Item -ItemType File $Cfg.StopFile -Force | Out-Null }catch{}
+    try{ New-Item -ItemType File $Cfg.PauseFile -Force | Out-Null }catch{}   # прервать текущее действие сразу
+    Write-PanelLog '⛔ Выключаю воркер GGskript…'
+    $script:exitT0=Get-Date; $tm=New-Object System.Windows.Forms.Timer; $tm.Interval=1000
+    $tm.Add_Tick({ param($s,$e)
+      $pids=@(Get-WorkerPids)
+      if(-not $pids.Count){ $s.Stop(); $s.Dispose(); Write-PanelLog '⛔ Воркер выключен.'; return }
+      if(((Get-Date)-$script:exitT0).TotalSeconds -ge 8){ foreach($p in $pids){ try{ Stop-Process -Id $p -Force -EA Stop }catch{} }; $s.Stop(); $s.Dispose(); Write-PanelLog "⛔ Воркер не завершился сам за 8 с — завершил процесс ($($pids -join ', '))." }
+    })
+    $tm.Start()
+  }
+}
+$miExit.Add_Click($script:doExit); $btnExit.Add_Click($script:doExit)
+$btnLim.Add_Click({ Send-Cmd 'лимиты' })
+# 27.10: «Сменил аккаунт» → /pc_acct → воркер сбрасывает CDP, перечитывает лимит/модель и сам продолжает. Защита от двойного клика: 5 с кнопка недоступна.
+$btnAcct.Add_Click({
+  Send-Cmd '/pc_acct'; $btnAcct.Enabled=$false
+  $tm=New-Object System.Windows.Forms.Timer; $tm.Interval=5000
+  $tm.Add_Tick({ param($s,$e) $s.Stop(); $s.Dispose(); $btnAcct.Enabled=$true })
+  $tm.Start()
+}); $btnStat.Add_Click({ Send-Cmd 'статус' }); $btnShot.Add_Click({ Send-Cmd 'скрин' }); $btnHelp.Add_Click({ $hp=Get-HelpDocPath $dir; if($hp){ try{ Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$hp+'"') | Out-Null }catch{ Write-PanelLog "❌ Помощь: не удалось открыть $hp ($($_.Exception.Message))" } } else { Write-PanelLog '⚠ Помощь: нет docs\HELP.txt и README.md' }; Send-Cmd 'помощь' })
 $btnAns.Add_Click({ Send-Cmd '/pc_answer' })
 $btnRep.Add_Click({ if(Confirm-Gui "Отправить в Gemini заново последний отчёт агента из Downloads?`nОтвет Gemini дальше пойдёт по обычным правилам."){ Send-Cmd '/pc_togemini' } })
 $btnFwd.Add_Click({ if(Confirm-Gui $script:ideTx.FwdConfirm){ Send-Cmd '/pc_toag' } })
@@ -292,12 +372,12 @@ function Update-CdpView([switch]$Force){
   if(-not $Force -and ((Get-Date)-$script:cdpAt).TotalSeconds -lt 5){ return }; $script:cdpAt=Get-Date
   foreach($x in @(@($lblCdpG,'Gemini',[int]$Cfg.CdpPort),@($lblCdpA,$script:ideTx.Short,[int]$script:ideTx.Port))){ $v=Get-PortView (Test-PortUp $x[2]) $x[1] $x[2]; $x[0].Text=$v.Text; $x[0].ForeColor=[System.Drawing.Color]::FromName($v.Color) }
 }
-function Write-PanelLog([string]$m){ $txtLog.AppendText("$(Get-Date -Format 'HH:mm:ss') $m`r`n"); $txtLog.ScrollToCaret() }
+function Write-PanelLog([string]$m){ Add-LogLines "$(Get-Date -Format 'HH:mm:ss') $m" }
 $btnCdpG.Add_Click({ try{ Write-PanelLog (Start-GeminiCdpChrome ([int]$Cfg.CdpPort)) }catch{ Write-PanelLog "❌ Chrome с портом: $($_.Exception.Message)" }; Send-Cmd '/pc_cdpcheck'; Update-CdpView -Force })
 $btnCdpA.Add_Click({
   if(-not (Confirm-Gui $script:ideTx.CdpConfirm)){ return }
   $form.Cursor=[System.Windows.Forms.Cursors]::WaitCursor
-  try{ Write-PanelLog $(if($Cfg.AgTarget -eq 'dsharness'){ Restart-DshCdp ([int]$Cfg.DshCdpPort) } else { Restart-AgCdp ([int]$Cfg.AgCdpPort) }) }catch{ Write-PanelLog "❌ $($script:ideTx.Short) с портом: $($_.Exception.Message)" } finally { $form.Cursor=[System.Windows.Forms.Cursors]::Default }
+  try{ Write-PanelLog $(if($Cfg.AgTarget -eq 'cursor'){ Restart-CursorCdp ([int]$(if($Cfg.CursorCdpPort){$Cfg.CursorCdpPort}else{9335})) } elseif($Cfg.AgTarget -eq 'dsharness'){ Restart-DshCdp ([int]$Cfg.DshCdpPort) } else { Restart-AgCdp ([int]$Cfg.AgCdpPort) }) }catch{ Write-PanelLog "❌ $($script:ideTx.Short) с портом: $($_.Exception.Message)" } finally { $form.Cursor=[System.Windows.Forms.Cursors]::Default }
   Send-Cmd '/pc_cdpcheck'; Update-CdpView -Force
 })
 # пункт 52: правая плитка индикатора — выбор IDE (только при ⏸ Стоп или когда скрипт не запущен)
@@ -347,14 +427,44 @@ $form.Add_FormClosing({
 $script:ideAt=[datetime]::MinValue; Apply-IdeTexts
 if($script:RenderOut){
   $form.StartPosition='Manual'; $form.Location=New-Object System.Drawing.Point(-6000,-6000); $form.ShowInTaskbar=$false
-  $lblState.Text='Состояние: работает'; $lblState.ForeColor=[System.Drawing.Color]::ForestGreen
-  $lblModel.Text='Модель: 3 Pro'; $lblFile.Text='Файл/этап: Project_2026-10-22_012.md — ждём отчёт'; $lblLim.Text=Format-GuiLimits ([pscustomobject]@{ ide=[string]$Cfg.AgTarget; ideName=(Get-IdeLabel); agH5=80; agH5Reset='18:00'; agWk=60; agWkReset='24.10' })
-  $txtLog.Text="15:00:01 Пример журнала`r`n15:00:02 Отправлено в $(Get-IdeLabel) через CDP`r`n"
-  $form.Show(); [System.Windows.Forms.Application]::DoEvents()
+  $lblState.Text='Состояние: работает — слежу за папкой Downloads, жду новый отчёт'; $lblState.ForeColor=[System.Drawing.Color]::ForestGreen
+  # образцы всех уровней цвета (error / warn / ok / info / dim)
+  Add-LogLines (@(
+    '15:00:01  Новый файл: AccessLabUnified_2026-10-27_004.md',
+    '15:00:02  Этап: AccessLabUnified_2026-10-27_004.md → отправлен в Gemini, жду ответ',
+    '15:00:09  ✅ Accept all нажат (1 files) (CDP, без мыши)',
+    "15:00:12  Отправлено в $(Get-IdeLabel) через CDP",
+    '15:00:20  ⏳ Gemini сейчас генерирует ответ — жду',
+    '15:00:31  ⚠️ Лимиты:',
+    '• Gemini (сайт), текущее: использовано 92% (сброс в 18:00)',
+    '15:00:40  ❌ ОШИБКА: Gemini/CDP (файл): чип файла не появился или загрузка не закончилась',
+    '15:00:41  ⛔ лимит Argon закончен, модель переключена на «Flash-Lite»',
+    '15:01:00  Лимит: модель всё ещё «Flash-Lite»',
+    '15:01:00  Лимиты: проверено в 15:01; Gemini 92% | Antigravity 80%',
+    '15:01:05  Аккаунт: u1|Аккаунт Google: Имя (почта); модель «Flash-Lite»; Argon: доступен в меню',
+    '15:02:00  Команда с ПК: /pc_acct',
+    '15:02:01  ✅ Аккаунт сменён, Argon доступен — продолжаю',
+    '15:02:05  ▶️ Лимиты в норме, работа возобновлена'
+  ) -join "`n")
+  # GG_RENDER_W/H — размер окна снимка; GG_RENDER_LONG=1 — очень длинная строка состояния и длинные строки журнала (проверка переноса)
+  if($env:GG_RENDER_W -and $env:GG_RENDER_H){ $form.Size=New-Object System.Drawing.Size([int]$env:GG_RENDER_W,[int]$env:GG_RENDER_H) }
+  if($env:GG_RENDER_LONG){
+    $lblState.Text=Format-ShortState "повтор после ошибки: Gemini/CDP (файл): чип файла AccessLabUnified_2026-10-27_001.md не появился или загрузка не закончилась (чипы=[ARGON_SYSTEM_PROMPT | TASKS-FIX-2026-10-27 | Ещё 2 | Посмотреть сведения об источнике])"
+    $lblState.Text='Состояние: работает — '+$lblState.Text+'. Ещё одно длинное пояснение, чтобы проверить перенос строки состояния при узком окне панели управления.'
+    Add-LogLines ("16:40:29  ❌ ОШИБКА: очень длинная строка журнала без обрезки — текст должен переноситься по ширине окна и не требовать горизонтальной прокрутки: AccessLabUnified_2026-10-27_001.md AccessLabUnified_2026-10-27_001.md`r`n")
+  }
+  $form.Show(); [System.Windows.Forms.Application]::DoEvents(); Fit-Layout
+  Add-InfoLog "Модель Gemini: Argon | Проект: AccessLabUnified | Следующий файл: нет | передан: Fishka 2_2026-10-25_009.md`r`n   $(Format-GuiLimits ([pscustomobject]@{ ide=[string]$Cfg.AgTarget; ideName=(Get-IdeLabel); agH5=80; agH5Reset='18:00'; agWk=60; agWkReset='24.10' }))"
   if($env:GG_RENDER_HOVER){ $script:comboHover=$true }; Set-TurnView (Get-TurnView 'antigravity' $true (Get-IdeLabel)); $script:turnPhase=1; foreach($l in $lblCdpG,$lblCdpA){ $l.Text=(Get-PortView $true $(if($l -eq $lblCdpG){'Gemini'}else{$script:ideTx.Short}) $(if($l -eq $lblCdpG){9222}else{[int]$script:ideTx.Port})).Text; $l.ForeColor=[System.Drawing.Color]::ForestGreen }
-  [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 300; [System.Windows.Forms.Application]::DoEvents()
-  $bm=New-Object System.Drawing.Bitmap($form.Width,$form.Height); $form.DrawToBitmap($bm,(New-Object System.Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bm.Save($script:RenderOut,[System.Drawing.Imaging.ImageFormat]::Png)
+  [System.Windows.Forms.Application]::DoEvents(); Fit-Layout; Start-Sleep -Milliseconds 300; [System.Windows.Forms.Application]::DoEvents(); Fit-Layout; [System.Windows.Forms.Application]::DoEvents()
+  $bm=New-Object System.Drawing.Bitmap($form.Width,$form.Height); $ok=$false
+  # PrintWindow рисует и RichTextBox (журнал), которого DrawToBitmap не показывает; откат — DrawToBitmap
+  try{ Add-Type -Namespace GGR -Name Pw -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool PrintWindow(System.IntPtr h, System.IntPtr hdc, uint f);' -EA Stop
+    $gx=[System.Drawing.Graphics]::FromImage($bm); $hd=$gx.GetHdc(); try{ $ok=[GGR.Pw]::PrintWindow($form.Handle,$hd,2) } finally { $gx.ReleaseHdc($hd); $gx.Dispose() } }catch{}
+  if(-not $ok){ $form.DrawToBitmap($bm,(New-Object System.Drawing.Rectangle(0,0,$form.Width,$form.Height))) }
+  $bm.Save($script:RenderOut,[System.Drawing.Imaging.ImageFormat]::Png)
   $timer.Dispose(); $form.Dispose(); return
 }
-$form.Add_Shown({ if(-not (Worker-Alive)){ Start-Worker }; Load-LogTail; Update-Status; $timer.Start() })
+$lnkClear.Add_LinkClicked({ Clear-PanelLog })
+$form.Add_Shown({ if(-not (Worker-Alive)){ if(-not $script:RenderOut){ try{ [void](Invoke-LogArchive -Path $Cfg.LogFile -Dir (Join-Path $dir 'logs') -Keep 10) }catch{}; $script:logPos=0 }; Start-Worker }; Load-LogTail; Update-Status; $timer.Start() })
 try{ [void]$form.ShowDialog() } finally { $timer.Stop(); $timer.Dispose(); Exit-SingleInstance $mtx }

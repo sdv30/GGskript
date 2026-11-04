@@ -113,7 +113,7 @@ $script:TgMenu=@(
   @('windows','🪟 Авто-закрываемые окна'),
   @('help','❓ Справка'))
 # пункт 52: подписи по выбранной IDE (Antigravity → Harness / DeepSeek Harness)
-function Convert-TgIdeText([string]$T,[switch]$Short){ if([string]$Cfg.AgTarget -ne 'dsharness'){ return $T }; $T.Replace('Accept all','Принять все').Replace('Antigravity',$(if($Short){'Harness'}else{'DeepSeek Harness'})) }
+function Convert-TgIdeText([string]$T,[switch]$Short){ if([string]$Cfg.AgTarget -eq 'cursor'){ return $T.Replace('Antigravity','Cursor') }; if([string]$Cfg.AgTarget -ne 'dsharness'){ return $T }; $T.Replace('Accept all','Принять все').Replace('Antigravity',$(if($Short){'Harness'}else{'DeepSeek Harness'})) }
 function Get-TgReplyButtons{ Convert-TgIdeText $script:TgReplyButtons -Short }
 function Get-TgMenuCommands{ @($script:TgMenu | ForEach-Object { [ordered]@{ command=$_[0]; description=(Convert-TgIdeText $_[1]) } }) }
 function Register-TgCommands{

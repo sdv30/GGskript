@@ -62,10 +62,11 @@ function Get-ActiveProjectNow{
     $known= if($script:St){ [string]$script:St.activeProject } else { '' }
     $all=@(Get-ReportCandidates -Files @(Get-ChildItem -LiteralPath $Cfg.Downloads -File -Filter '*.md' -EA 0) -Pattern $Cfg.Pattern -MaxAgeHours ([double]$Cfg.MaxReportAgeHours))
     $nw=$all | Select-Object -Last 1
+    $script:KnownProjects=@(@($all | ForEach-Object { [string]$_.Project }) + $known | Where-Object { $_ } | Select-Object -Unique)   # 25.10: имена проектов с пробелом
     if(-not $known){ if($nw){ Set-ActiveProject $nw.Project "самый свежий отчёт $($nw.Name)" }; return [string]$nw.Project }
     if($nw -and $nw.Project -ne $known){
       $t=Get-LastAgRelayTime $script:St
-      if(-not $t -or $nw.Time -gt $t.AddSeconds(3)){ Set-ActiveProject $nw.Project "отчёт $($nw.Name) ($($nw.Time.ToString('HH:mm:ss'))) новее последней вставки в Antigravity" }
+      if(-not $t -or $nw.Time -gt $t.AddSeconds(3)){ Set-ActiveProject $nw.Project "отчёт $($nw.Name) ($($nw.Time.ToString('HH:mm:ss'))) новее последней вставки в $(Get-IdeName)" }
     }
     [string]$script:St.activeProject
   } finally { $script:InActiveProject=$false }
@@ -77,9 +78,13 @@ function Set-ActiveProject([string]$P,[string]$Why){
 }
 # Заголовок блока Gemini -> активный проект и номер шага. Без заголовка — пишу в лог «формат промпта нарушен» (один раз на блок).
 function Note-BlockHeader([string]$Code){
-  $h=Get-PromptHeader $Code
-  if($h){ Set-ActiveProject $h.project "заголовок блока Gemini [$($h.project)] [S$($h.step)]" }
-  elseif($Code){ $k=Get-Hash8 $Code; if($script:FormatWarned -ne $k){ $script:FormatWarned=$k; Log "⚠ формат промпта нарушен: в блоке Gemini нет заголовка «[…] [Проект] [S<N>] […]» (первая строка «$(Get-FirstLine $Code)») — очередь по чередованию содержимого" } }
+  try{ [void](Get-ActiveProjectNow) }catch{}   # 25.10: обновить список известных проектов (имена с пробелом)
+  $h=Get-BlockAsk $Code $Cfg.Pattern
+  if($h -and [int]$h.step -ge 1){
+    $why= if($h.from -eq 'filename'){ "имя отчёта в блоке Gemini «$($h.project)_…_$('{0:D3}' -f $h.step).md»" } else { "заголовок блока Gemini [$($h.project)] [S$($h.step)]" }
+    Set-ActiveProject $h.project $why
+  }
+  elseif($Code){ $k=Get-Hash8 $Code; if($script:FormatWarned -ne $k){ $script:FormatWarned=$k; Log "⚠ формат промпта нарушен: в блоке Gemini нет заголовка «[…] [Проект] [S<N>] […]» и нет имени «Проект_YYYY-MM-DD_NNN.md» (первая строка «$(Get-FirstLine $Code)») — очередь по чередованию содержимого" } }
   $h
 }
 function Get-FileHash8([string]$Path){ try{ Get-Hash8 ([IO.File]::ReadAllText($Path,[Text.Encoding]::UTF8)) }catch{ '' } }
@@ -87,22 +92,65 @@ function Get-FileHash8([string]$Path){ try{ Get-Hash8 ([IO.File]::ReadAllText($P
 function Get-TurnDecisionNow([string]$BlockCode=''){
   $ap=Get-ActiveProjectNow
   $hdr=$null; $bh=''
-  if($BlockCode){ $hdr=Get-PromptHeader $BlockCode; $bh=Get-Hash8 $BlockCode }
-  elseif($script:St.lastBlock -and [string]$script:St.lastBlock.project -eq $ap){ $hdr=@{ project=[string]$script:St.lastBlock.project; step=[int]$script:St.lastBlock.step; rework=[bool]$script:St.lastBlock.rework } }
+  if($BlockCode){ $hdr=Get-BlockAsk $BlockCode $Cfg.Pattern; $bh=Get-Hash8 $BlockCode }
+  elseif($script:St.lastBlock -and (Test-SameProject ([string]$script:St.lastBlock.project) $ap) -and [int]$script:St.lastBlock.step -ge 1){ $hdr=@{ project=$ap; step=[int]$script:St.lastBlock.step; rework=[bool]$script:St.lastBlock.rework } }   # 25.10: «2» == «Fishka 2»
   $rep=@(Get-ReportCandidates -Files @(Get-Files) -Project $(if($hdr){$hdr.project}else{$ap}) -Pattern $Cfg.Pattern -MaxAgeHours ([double]$Cfg.MaxReportAgeHours)) | Select-Object -Last 1
+  if(Invoke-StepSeriesCheck $hdr $bh $rep){ if(-not $BlockCode){ $hdr=$null } }   # 02.11: новая серия шагов — учёт прошлой серии не мешает
   $rh= if($rep){ Get-FileHash8 $rep.FullName } else { '' }
   $t=Get-LastAgRelayTime $script:St; if(-not $t){ $t=[datetime]::MinValue }
-  Get-TurnDecision -Header $hdr -BlockHash $bh -Report $rep -ReportHash $rh -State $script:St -LastAgAt $t
+  $d=Get-TurnDecision -Header $hdr -BlockHash $bh -Report $rep -ReportHash $rh -State $script:St -LastAgAt $t
+  # 25.10 (tabfix): решение по учёту сверяю с фактом
+  if($d.turn -eq 'gemini' -and $d.action -ne 'wait-answer'){
+    if($script:GemForeign){ $d.turn='operator'; $d.action='wait'; $d.reason="в выбранном чате Gemini нет отчётов проекта — это не ход Gemini, жду решения" }
+    else{ $f=Get-AgFactNow; if($f -and $f.busy){ $d.turn='antigravity'; $d.action='wait-report'; $d.reason="агент $(Get-IdeName) ещё работает — его ход, отчёт в Gemini не отправляю" } }
+  }
+  $d
+}
+# 25.10 (tabfix): факт из IDE — агент работает? (кнопка Cancel; только CDP, кэш 15 с). $null — не знаю.
+$script:AgFactCache=$null; $script:AgFactAt=[datetime]::MinValue
+function Get-AgFactNow{
+  if(-not $Cfg.TurnByAgFact -or $Cfg.AgTransport -ne 'cdp' -or (Test-IsDsh)){ return $null }
+  if(((Get-Date)-$script:AgFactAt).TotalSeconds -lt 15){ return $script:AgFactCache }
+  $o=$null; try{ $o=@{ busy=[bool](AgCdp-IsBusy) } }catch{ $o=$null }
+  $script:AgFactCache=$o; $script:AgFactAt=Get-Date; $o
+}
+# 25.10 (tabfix): чужой/новый чат Gemini — в нём нет ни одного отчёта текущего проекта. -> причина (строка) или $null.
+# Шаг 001 (новый проект — новый чат) и «отправь заново» (этап resend) — не блокирую. Ошибка чтения — $null (не знаю).
+$script:GemForeign=$false
+function Test-ForeignGeminiChat([string]$Name){
+  if(-not $Cfg.ForeignChatGuard -or $Cfg.GeminiTransport -ne 'cdp'){ return $null }
+  if((Get-Stage $Name) -eq 'resend'){ return $null }
+  $num=0; try{ $num=[int][regex]::Match($Name,$Cfg.Pattern).Groups['n'].Value }catch{}
+  if($num -le 1){ $script:GemForeign=$false; return $null }
+  $pr=ProjOf $Name; if(-not $pr){ return $null }
+  $tx=$null; try{ $tx=@(GemCdp-PromptTexts) }catch{ return $null }
+  if(Test-ChatHasProjectReports $tx $pr){ $script:GemForeign=$false; return $null }
+  $script:GemForeign=$true
+  if(@($tx).Count -eq 0){ "открыт пустой (новый) чат Gemini — в нём нет отчётов проекта $pr" } else { "в открытом чате Gemini нет отчётов проекта $pr (чужой чат)" }
 }
 function Note-Contradiction($d){
   if(-not $d -or -not $d.contradiction){ return }
   if($script:ContraSaid -eq $d.contradiction){ return }; $script:ContraSaid=$d.contradiction
   $msg="⚖ Очередь: противоречие — $($d.contradiction). Безопасный вариант: ничего не отправляю повторно, жду новое."; Log $msg; try{ Tg-Send $msg | Out-Null }catch{}
 }
+# 02.11 (stepseries): новая серия шагов -> сброс учёта прошлой серии (один раз), запись в журнал. -> $true если сброшено.
+function Invoke-StepSeriesCheck($Hdr,[string]$BlockHash,$Rep){
+  $lb=$script:St.lastBlock; if(-not $lb){ return $false }
+  $cn=Clear-StaleStepRecords $script:St
+  if($cn -gt 0){ Save-State; Log "🔁 Очередь [$($lb.project)]: убрал $cn записей прошлой серии с номером больше S$($lb.step) — они не будут мешать следующим шагам" }
+  $why=$null
+  if($Hdr -and [int]$Hdr.step -ge 1 -and $BlockHash){ $why=Test-StepSeriesRestart -State $script:St -Project ([string]$Hdr.project) -Step ([int]$Hdr.step) -BlockHash $BlockHash }
+  if(-not $why -and $Rep -and $Rep.Time){ $why=Test-StepSeriesRestart -State $script:St -Project ([string]$Rep.Project) -ReportNum ([int]$Rep.Num) -ReportTime $Rep.Time -ReportName ([string]$Rep.Name) }
+  if(-not $why){ return $false }
+  $pr=[string]$lb.project; $old=[int]$lb.step; $n=Reset-StepSeries $script:St $pr; Save-State
+  $script:ContraSaid=''; $script:StepGateSaid=''
+  Log "🔁 Очередь [$pr]: новая серия шагов — $why. Учёт прошлой серии (до S$old, записей: $n) больше не учитываю; дату в имени отчёта не сверяю."
+  $true
+}
 # Запомнить переданный в Antigravity блок (проект, шаг, хэш).
 function Register-BlockRelayed([string]$Code,[string]$Hash){
-  $h=Get-PromptHeader $Code; $ap=Get-ActiveProjectNow
-  $pr= if($h){ $h.project } else { $ap }; $stp= if($h){ [int]$h.step } else { -1 }
+  $ap=Get-ActiveProjectNow; $h=Get-BlockAsk $Code $Cfg.Pattern   # 25.10: сначала проект (известные имена с пробелом), потом разбор
+  $pr= if($h -and $h.project){ $h.project } else { $ap }; $stp= if($h -and [int]$h.step -ge 1){ [int]$h.step } else { -1 }
   Add-SentRecord $script:St 'ag' $pr $stp $Hash
   $script:St.lastBlock=[ordered]@{ project=$pr; step=$stp; hash=$Hash; at=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); rework=[bool]($h -and $h.rework) }
   $script:St.lastAgAt=(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -126,14 +174,14 @@ function Test-BlockFromArgon([string]$Code,[bool]$ArgonNow,$Gate){
   @{ ok=$true; why='меток нет — не могу проверить, что блок от Argon; передаю (формат промпта нарушен)' }
 }
 function Get-BlockGate([string]$Code){
-  $h=Get-PromptHeader $Code; $pr= if($h){ $h.project } else { '' }
+  $h=Get-BlockAsk $Code $Cfg.Pattern; $pr= if($h){ $h.project } else { '' }
   Test-BlockStepTags $Code (Get-LatestReportNum $pr)
 }
 # Несовпадение меток: НЕ вставляю, одна заметка в Telegram с кнопками (не блокирующий вопрос), жду.
 function Notify-BlockGate($g,[string]$Hash,[string]$n=''){
   $script:GateHold=$Hash
   if($script:GateSaid -eq $Hash){ return }; $script:GateSaid=$Hash
-  $msg="⚠️ [$($g.project)] Блок Gemini S$('{0:D3}' -f $g.step)$(if($g.rework){' (REWORK)'})$(if($n){" (ответ на $n)"}) в Antigravity НЕ вставлен: $($g.reason). Жду: новый ответ Gemini или ваше решение."
+  $msg="⚠️ [$($g.project)] Блок Gemini S$('{0:D3}' -f $g.step)$(if($g.rework){' (REWORK)'})$(if($n){" (ответ на $n)"}) в $(Get-IdeName) НЕ вставлен: $($g.reason). Жду: новый ответ Gemini или ваше решение."
   Log $msg
   try{ [void](New-TgPrompt -Kind 'gate' -Text $msg -Buttons '⏩ Передай всё равно=force|🔁 Отправь заново=resend' -Data @{ file=$n; hash=$Hash }) }catch{ try{ Tg-Send $msg | Out-Null }catch{} }
 }
@@ -146,7 +194,7 @@ function Get-AnswerRefNow{
 function Enter-OperatorWait([string]$n,[string]$Text,[string]$Model){
   Set-Stage $n 'operator' -Force; Mark-Done $n; $script:OperatorWait=$n
   $full=Save-FullAnswer $n $Text
-  $msg="🛑 [$(ProjOf $n)] Argon остановился: «СТОП — РЕШЕНИЕ ОПЕРАТОРА» (ответ на $n, модель $Model). В Antigravity ничего не передаю, повторно не отправляю — жду вас."
+  $msg="🛑 [$(ProjOf $n)] Argon остановился: «СТОП — РЕШЕНИЕ ОПЕРАТОРА» (ответ на $n, модель $Model). В $(Get-IdeName) ничего не передаю, повторно не отправляю — жду вас."
   Log "$msg`r`n$(($Text -replace "`r?`n","`r`n").TrimEnd())"
   try{ Send-OperatorAnswer $Text $n }catch{ Log "Текст остановки в Telegram не отправлен: $($_.Exception.Message)" }
   try{ [void](New-TgPrompt -Kind 'operator' -Text $msg -Buttons '✍️ Напиши=write|🔁 Отправь заново=resend' -Data @{ file=$n; full=$full } -TimeoutMin ([Math]::Max([double]$Cfg.TgPromptTimeoutMin,720))) }catch{ try{ Tg-Send $msg | Out-Null }catch{} }
@@ -165,7 +213,7 @@ function Reset-RewrittenReports{
   foreach($f in @(Get-Files)){
     if(Test-ReportRewritten $script:St $f.Name $f.LastWriteTime){
       $old=$script:St.files[$f.Name]; Remove-FileStage $script:St $f.Name; Save-State; $script:Held.Remove($f.Name)
-      $msg="🔁 Очередь: $($f.Name) перезаписан в $($f.LastWriteTime.ToString('HH:mm:ss')) — после этапа «$(Get-StageRu ([string]$old.stage))» ($($old.time)). Antigravity написал новый отчёт → очередь Gemini, отправлю."
+      $msg="🔁 Очередь: $($f.Name) перезаписан в $($f.LastWriteTime.ToString('HH:mm:ss')) — после этапа «$(Get-StageRu ([string]$old.stage))» ($($old.time)). $(Get-IdeName) написал новый отчёт → очередь Gemini, отправлю."
       Log $msg; try{ Tg-Send $msg | Out-Null }catch{}
     }
   }
@@ -181,10 +229,12 @@ function Next-File{
   # пункт 43: только самый свежий по времени файла (max LastWriteTime/CreationTime) отчёт активного проекта; старые не трогаю и не помечаю
   $nw=@($files | Sort-Object Time,Key) | Select-Object -Last 1
   if(-not $nw -or (Is-Done $nw.Name) -or $script:Held.ContainsKey($nw.Name)){ return $null }
+  $M0=0; [void][int]::TryParse([regex]::Match($nw.Name,$Cfg.Pattern).Groups['n'].Value,[ref]$M0)
+  [void](Invoke-StepSeriesCheck $null '' ([pscustomobject]@{ Name=[string]$nw.Name; Project=(ProjOf $nw.Name); Num=$M0; Time=$(if($nw.Time){$nw.Time}else{$nw.LastWriteTime}) }))   # 02.11: новая серия шагов (новый день/чат) — старый S<N> не держит отчёт
   $lb=$script:St.lastBlock
   if($lb -and [int]$lb.step -ge 0 -and [string]$lb.project -eq (ProjOf $nw.Name)){
     $M=[int][regex]::Match($nw.Name,$Cfg.Pattern).Groups['n'].Value
-    if($M -lt [int]$lb.step){ $k="$($nw.Name)<$($lb.step)"; if($script:StepGateSaid -ne $k){ $script:StepGateSaid=$k; Log "⚖ Очередь: $($nw.Name) (№$M) меньше шага S$($lb.step), который уже у Antigravity — ход Antigravity, отчёт не отправляю, жду №$($lb.step)" }; return $null }
+    if($M -lt [int]$lb.step){ $k="$($nw.Name)<$($lb.step)"; if($script:StepGateSaid -ne $k){ $script:StepGateSaid=$k; Log "⚖ Очередь: $($nw.Name) (№$M) меньше шага S$($lb.step), который уже у $(Get-IdeName) — ход $(Get-IdeName), отчёт не отправляю, жду №$($lb.step)" }; return $null }
   }
   $nw
 }
@@ -221,8 +271,10 @@ function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoCha
   if(-not $vis -and -not $NoChat -and $Cfg.MatchByContent){
     # пункт 27C: отправлен вручную — узнаю по содержимому (или по вложению с именем файла)
     $hit=Test-FileInGemini $nw
-    if($hit -and $hit.how -eq 'name' -and (Test-ReportNewerThanAg $script:St $nw.LastWriteTime)){
-      $out.lines+="   ⚖ очередь: $n ($($nw.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini не считаю отправкой (это упоминание в промпте), очередь Gemini"; $hit=Test-FileInGemini $nw -ContentOnly }
+    # пункт 60: только СЛАБОЕ совпадение имени (UIA-упоминание, attached=$false) перепроверяю по содержимому.
+    # Реальное вложение (CDP chip / «Файл отчёта:») — это отправка; иначе скрипт снова прикрепляет файл, который Gemini уже обрабатывает.
+    if($hit -and $hit.how -eq 'name' -and -not [bool]$hit.attached -and (Test-ReportNewerThanAg $script:St $nw.LastWriteTime)){
+      $out.lines+="   ⚖ очередь: $n ($($nw.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в $(Get-IdeName) ($(Get-LastAgRelayTimeRu)) — слабое совпадение имени (не чип) → проверяю по содержимому"; $hit=Test-FileInGemini $nw -ContentOnly }
     if($hit -and $hit.last){ $vis=$true; $how=$(if($hit.how -eq 'content'){' (узнал по содержимому — отправлен вручную)'}else{' (по имени файла во вложении)'}) }
     elseif($hit){
       if(-not $DryRun){ [void](Set-FileStage -State $script:St -Name $n -Stage 'skipped' -Note 'уже есть в чате Gemini (найден по содержимому), но не последним запросом — ответ автоматически не беру' -Force); Save-State }
@@ -231,7 +283,7 @@ function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoCha
   }
   if($vis){
     if(-not $DryRun){ if($st -ne 'sent'){ Set-Stage $n 'sent' -Force }; $script:Adopted[$n]=$true }
-    $out.lines+="   самый новый $n уже есть в чате Gemini$how — повторно НЕ отправляю, беру ответ (если ответ уже есть в Antigravity — не вставляю)"; return $out
+    $out.lines+="   самый новый $n уже есть в чате Gemini$how — повторно НЕ отправляю, беру ответ (если ответ уже есть в $(Get-IdeName) — не вставляю)"; return $out
   }
   if($Cfg.StartupAskNewest -and -not $Cfg.AutoDecide){
     if(-not $DryRun){ $script:Held[$n]=$true }
@@ -241,7 +293,7 @@ function Invoke-StartupTriage([string]$LastPrompt,[switch]$DryRun,[switch]$NoCha
     if($st -eq 'sent'){ Set-Stage $n 'resend' }
     $g=[int]$Cfg.AutoSendGraceSec; $script:AutoSend[$n]=$true
     if($g -gt 0){ $script:SendNotBefore[$n]=(Get-Date).AddSeconds($g) }
-    Log "Авторешение: $n новее последней вставки в Antigravity и в чате Gemini не найден — очередь Gemini; отправлю сам через $g сек, перед отправкой перепроверю чат (если отправлен вручную — не дублирую)"
+    Log "Авторешение: $n новее последней вставки в $(Get-IdeName) и в чате Gemini не найден — очередь Gemini; отправлю сам через $g сек, перед отправкой перепроверю чат (если отправлен вручную — не дублирую)"
   }
   $out.lines+="   самый новый $n в чате Gemini не найден — очередь Gemini, отправлю сам через $([int]$Cfg.AutoSendGraceSec) сек (перед отправкой перепроверю чат, вопрос не задаю)"
   $out
@@ -307,7 +359,7 @@ function Enter-LimitStop($m,$note){
   if($script:LimitStop){ if($note){ Log $note; Tg-Send "⛔ $note" | Out-Null }; return }
   $script:LimitStop=$true; $script:LimitSince=Get-Date; $script:AutoPlan=$null; $script:AutoPlanKey=''
   $auto= if($Cfg.AutoResume){ "`nПосле сброса лимита сам проверю страницу лимитов$(if($Cfg.AutoSwitchModel){", верну $($Cfg.ModelMustContain)"}) и продолжу." } else { '' }
-  $msg="⛔ Работа остановлена: в Gemini вместо $($Cfg.ModelMustContain) выбрана модель «$m» — похоже, закончился дневной лимит. Смени аккаунт.$(if($note){"`n$note"})`nПроверяю модель раз в $($Cfg.ModelRecheckSec) сек; можно написать «продолжай».$auto"
+  $msg="⛔ лимит Argon закончен, модель переключена на «$m». Вложение отчёта и Send в Gemini НЕ выполняю. Смени аккаунт или верни $($Cfg.ModelMustContain).$(if($note){"`n$note"})`nПроверяю модель раз в $($Cfg.ModelRecheckSec) сек; можно написать «продолжай».$auto"
   Log $msg; Tg-Send $msg | Out-Null; [void](Play-Sound 'limit')
 }
 function Resume-Work($how){
@@ -323,7 +375,7 @@ function Assert-CanSendGemini($ctx){
 }
 function Assert-Quota([switch]$Gemini,[switch]$Ag){
   if($Gemini -and $script:QStopG){ throw [GG.RelayLimitException]::new('остановлено по лимиту Gemini (сайт)') }
-  if($Ag -and $script:QStopA){ throw [GG.RelayLimitException]::new('остановлено по лимиту Antigravity') }
+  if($Ag -and $script:QStopA){ throw [GG.RelayLimitException]::new("остановлено по лимиту $(Get-IdeName)") }
 }
 
 # ---------- Свежесть ответа ----------
@@ -339,10 +391,10 @@ function Check-OurPrompt($pBefore,[string]$Name){
   throw "Не вижу нашего сообщения в диалоге Gemini (запросов было $pBefore, стало $pNow) — ответ НЕ передаю"
 }
 function Ag-HasText([string]$Text){
-  if($Cfg.AgTarget -eq 'dsharness'){ try{ $r=Test-DshDelivered $Text; if($null -ne $r){ return $r } }catch{ Log "Сверка с DeepSeek Harness через CDP: $($_.Exception.Message)" }; return $false }
+  if((Test-IsDsh)){ try{ $r=Test-DshDelivered $Text; if($null -ne $r){ return $r } }catch{ Log "Сверка с $(Get-IdeName) через CDP: $($_.Exception.Message)" }; return $false }
   # пункт 28: AgTransport=cdp — сверяю с текстом страницы Antigravity (UIA-дерево Electron чат не показывает — была ложная «нет»)
   if($Cfg.AgTransport -eq 'cdp'){
-    try{ $r=Test-TextInBody -Text $Text -Body ([string](AgEval-Js 'body')); if($null -ne $r){ return $r } }catch{ Log "Сверка с Antigravity через CDP: $($_.Exception.Message) — пробую UIA" }
+    try{ $r=Test-TextInBody -Text $Text -Body ([string](AgEval-Js 'body')); if($null -ne $r){ return $r } }catch{ Log "Сверка с $(Get-IdeName) через CDP: $($_.Exception.Message) — пробую UIA" }
   }
   $h=Ag-GetWindow; if(!$h){ return $false }
   $k=Get-NormKey $Text 120; if($k.Length -lt 20){ return $false }
@@ -361,10 +413,10 @@ function Relay-ToAg([string]$n,[string]$ans,[string]$hh,[string]$m2,[string]$how
   Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'relayed' $hh -Force:((Get-Stage $n) -in @('','done','relayed'))
   Remove-AnswerCache $n
   [void](Play-Sound 'info')
-  $rec= if($script:AgBlock){ "✅ Antigravity снова $(if($script:AgBlock.kind -eq 'foreign'){'свободен (поле чата очищено)'}else{'отвечает'}), ответ передан.`n" } else { '' }
-  if($script:AgBlock){ Log "Antigravity: состояние «$($script:AgBlock.kind)» с $($script:AgBlock.since.ToString('HH:mm:ss')) закончилось" }
+  $rec= if($script:AgBlock){ "✅ $(Get-IdeName) снова $(if($script:AgBlock.kind -eq 'foreign'){'свободен (поле чата очищено)'}else{'отвечает'}), ответ передан.`n" } else { '' }
+  if($script:AgBlock){ Log "$(Get-IdeName): состояние «$($script:AgBlock.kind)» с $($script:AgBlock.since.ToString('HH:mm:ss')) закончилось" }
   $script:AgBlock=$null
-  $msg="$rec✅ [$(ProjOf $n)] Ответ на $n дала модель $m2; блок Markdown ($($ans.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $ans)») передан в Antigravity$how"
+  $msg="$rec✅ [$(ProjOf $n)] Ответ на $n дала модель $m2; блок Markdown ($($ans.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $ans)») передан в $(Get-IdeName)$how"
   Log $msg; Tg-Send $msg | Out-Null; Mark-Done $n
 }
 # ---------- Сохранённые ответы (до подтверждённой доставки в Antigravity) ----------
@@ -381,7 +433,7 @@ function Set-Stale([string]$n,[string]$hh,[string]$why){
   Set-Stage $n 'stale' $hh
   if(-not $script:StaleNotified.ContainsKey($n)){
     $script:StaleNotified[$n]=1
-    $msg="⚠️ $($n): $why. В Antigravity НЕ передаю и не повторяю автоматически. Ответь «передай всё равно» — передам этот ответ, или «отправь заново» — отправлю отчёт в Gemini ещё раз."
+    $msg="⚠️ $($n): $why. В $(Get-IdeName) НЕ передаю и не повторяю автоматически. Ответь «передай всё равно» — передам этот ответ, или «отправь заново» — отправлю отчёт в Gemini ещё раз."
     Log $msg; Tg-Send $msg | Out-Null
   }
 }
@@ -400,14 +452,15 @@ function Finish-Answered([string]$n){
     Save-AnswerCache $n $ans
   }
   $h2=Get-Hash8 $ans
-  if((Test-RelayHash $script:St $h2) -or (Ag-HasText $ans)){ $msg="ℹ️ Ответ на $n уже есть в Antigravity — повторно не вставляю"; if($script:AgBlock){ $msg="✅ Antigravity снова отвечает.`n$msg"; $script:AgBlock=$null }; Log $msg; Tg-Send $msg | Out-Null; Register-BlockRelayed $ans $h2; Add-RelayHash $script:St $h2 $Cfg.HashKeep; Set-Stage $n 'relayed' $h2; Remove-AnswerCache $n; Mark-Done $n; return }
+  $had=Test-RelayHash $script:St $h2; $inIde=$false; if(-not $had){ try{ $inIde=[bool](Ag-HasText $ans) }catch{ $inIde=$false; Log "Сверка с $(Get-IdeName): $($_.Exception.Message)" } }
+  if($had -or $inIde){ $why= if($had){ "хэш $h2 уже в учёте" } else { "текст блока (mid+tail) найден на странице IDE" }; $msg="ℹ️ Ответ на $n уже есть в $(Get-IdeName) ($why) — повторно не вставляю"; if($script:AgBlock){ $msg="✅ $(Get-IdeName) снова отвечает.`n$msg"; $script:AgBlock=$null }; Log $msg; Tg-Send $msg | Out-Null; Register-BlockRelayed $ans $h2; Add-RelayHash $script:St $h2 $Cfg.HashKeep; Set-Stage $n 'relayed' $h2; Remove-AnswerCache $n; Mark-Done $n; return }
   Relay-ToAg $n $ans $h2 $m2
 }
 function Process-File($next){
   $n=$next.Name; $st=Get-Stage $n
   if($st -eq 'operator'){ $script:State="🛑 $($n): Argon ждёт решения оператора («Напиши» / «Отправь заново»)"; return }
   if($st -eq 'stale'){ $script:State="$($n): ждёт решения по повторному ответу («передай всё равно» / «отправь заново»)"; return }
-  if($st -eq 'answered'){ if($script:QStopA){ $script:State="ответ на $n получен — передам в Antigravity после сброса его лимита"; return }; $script:State="передаю уже полученный ответ на $n"; Finish-Answered $n; return }
+  if($st -eq 'answered'){ if($script:QStopA){ $script:State="ответ на $n получен — передам в $(Get-IdeName) после сброса его лимита"; return }; $script:State="передаю уже полученный ответ на $n"; Finish-Answered $n; return }
   $ctx=$null; $pBefore=-1
   if($st -eq '' -and $Cfg.StartupNewestOnly){
     $nh=Get-NewerHandled $next
@@ -422,8 +475,8 @@ function Process-File($next){
   if(($st -eq '' -or ($auto -and $st -eq 'resend')) -and $Cfg.MatchByContent){
     # пункт 27C: пользователь мог отправить файл в Gemini сам — не дублирую
     $hit=Test-FileInGemini $next
-    if($hit -and $hit.how -eq 'name' -and (Test-ReportNewerThanAg $script:St $next.LastWriteTime)){
-      Log "⚖ Очередь: $n ($($next.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в Antigravity ($(Get-LastAgRelayTimeRu)) — имя в чате Gemini — это упоминание в промпте, а не отправка; очередь Gemini → проверяю по содержимому, не отправлен ли вручную"; $hit=Test-FileInGemini $next -ContentOnly }
+    if($hit -and $hit.how -eq 'name' -and -not [bool]$hit.attached -and (Test-ReportNewerThanAg $script:St $next.LastWriteTime)){
+      Log "⚖ Очередь: $n ($($next.LastWriteTime.ToString('HH:mm:ss'))) новее последней вставки в $(Get-IdeName) ($(Get-LastAgRelayTimeRu)) — слабое совпадение имени (не чип вложения) → проверяю по содержимому"; $hit=Test-FileInGemini $next -ContentOnly }
     if($hit -and $hit.last){
       Set-Stage $n 'sent'; $st='sent'; $script:Adopted[$n]=$true
       $msg="ℹ️ [$(ProjOf $n)] $n уже есть в чате Gemini ($(if($hit.how -eq 'content'){'узнал по содержимому — отправлен вручную'}else{'вложение с именем файла'})) — повторно НЕ отправляю, жду и беру ответ"; Log $msg; Tg-Send $msg | Out-Null
@@ -437,6 +490,23 @@ function Process-File($next){
     if($fh -and (Test-SentRecord $script:St 'gem' '' -1 $fh)){ Set-Stage $n 'sent' -Force; $st='sent'; $script:Adopted[$n]=$true; Log "ℹ️ $($n): это содержимое (хэш $fh) уже отправлялось в Gemini — повторно не отправляю, жду ответ" }
   }
   if($st -ne 'sent'){
+    # пункт 60: Gemini уже отвечает на этот отчёт — не прикрепляю повторно
+    $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{}
+    $lp=$null; try{ $lp=Gem-LastReportPrompt }catch{}
+    if($gen -and $lp -and ($lp -eq $n -or (Test-ChipMatchesName $lp $n))){
+      Set-Stage $n 'sent'; $st='sent'; $script:Adopted[$n]=$true
+      Log "⏳ Gemini ещё обрабатывает $n (генерирует ответ, последний отчёт в чате — $lp) — повторно НЕ прикрепляю, жду ответ"
+    }
+  }
+  if($st -ne 'sent'){
+    # 25.10 (tabfix): агент IDE ещё работает — отчёт может быть не финальным и ход не Gemini; не отправляю
+    $af=Get-AgFactNow
+    if($af -and $af.busy){ $script:State="жду: агент $(Get-IdeName) ещё работает — $n в Gemini пока не отправляю"; if($script:AgBusySaid -ne $n){ $script:AgBusySaid=$n; Log "⏳ $($n): агент $(Get-IdeName) ещё работает (видна кнопка Cancel) — в Gemini пока НЕ отправляю, отправлю после окончания его работы" }; return }
+    # 25.10 (tabfix): чужой/новый чат Gemini — ничего не отправляю, спрашиваю
+    $fg=Test-ForeignGeminiChat $n
+    if($fg){ $script:State="⛔ $($n) НЕ отправляю: $fg. Откройте нужный чат или напишите «отправь заново»"
+      if($script:ForeignSaid -ne "$n|$fg"){ $script:ForeignSaid="$n|$fg"; $msg="⛔ [$(ProjOf $n)] $n НЕ отправляю: $fg. Откройте чат Gemini с этим проектом — продолжу сам; или напишите «отправь заново» — отправлю в открытый чат."; Log $msg; Tg-Send $msg | Out-Null }
+      return }
     $script:State="обрабатываю $n"
     Log "Новый файл: $n (проект: $(ProjOf $n))$(if($st -eq 'resend'){' (повторная отправка)'})"
     Wait-FileStable $next.FullName
@@ -454,7 +524,7 @@ function Process-File($next){
   $m2=Get-ModelNow
   if(-not (Is-Argon $m2)){
     Set-Stage $n 'resend'
-    Enter-LimitStop $m2 "Ответ на $n пришёл от модели «$m2» и в Antigravity НЕ передан; после возобновления файл будет отправлен в Gemini заново."
+    Enter-LimitStop $m2 "Ответ на $n пришёл от модели «$m2» и в $(Get-IdeName) НЕ передан; после возобновления файл будет отправлен в Gemini заново."
     return
   }
   Check-OurPrompt $pBefore $n
@@ -473,7 +543,7 @@ function Process-File($next){
     if($w.text -and (Test-OperatorStop $w.text)){ Enter-OperatorWait $n $w.text $m2; return }   # пункт 44: осознанная остановка — не nocode, без resend
     $full= if($w.text){ Save-FullAnswer $n $w.text } else { $null }
     Set-Stage $n 'nocode'; Mark-Done $n
-    Log "⚠️ Файл $($n): в последнем ответе Gemini (модель $m2) нет блока кода '$($Cfg.CodeBlockLang)'. В Antigravity ничего не вставлено. Полный ответ: $(if($full){"сохранён ($($w.text.Length) симв., $($w.via))"}else{'не сохранён'})"
+    Log "⚠️ Файл $($n): в последнем ответе Gemini (модель $m2) нет блока кода '$($Cfg.CodeBlockLang)'. В $(Get-IdeName) ничего не вставлено. Полный ответ: $(if($full){"сохранён ($($w.text.Length) симв., $($w.via))"}else{'не сохранён'})"
     [void](Send-NoCodePrompt -Label $n -Model $m2 -FullPath $full -File $n); [void](Play-Sound 'nocode')
     return
   }
@@ -484,13 +554,13 @@ function Process-File($next){
     $fresh=Wait-FreshAnswer $n $hh
     if(-not $fresh){ Set-Stale $n $hh "ответ Gemini совпадает с уже переданным раньше (хэш $hh, «$(Get-FirstLine $ans)»), нового ответа за $($Cfg.DupAnswerWaitSec) сек не появилось"; return }
     $m2=Get-ModelNow
-    if(-not (Is-Argon $m2)){ Set-Stage $n 'resend'; Enter-LimitStop $m2 "Ответ на $n пришёл от модели «$m2» и в Antigravity НЕ передан; после возобновления файл будет отправлен в Gemini заново."; return }
+    if(-not (Is-Argon $m2)){ Set-Stage $n 'resend'; Enter-LimitStop $m2 "Ответ на $n пришёл от модели «$m2» и в $(Get-IdeName) НЕ передан; после возобновления файл будет отправлен в Gemini заново."; return }
     $ans=$fresh; $hh=Get-Hash8 $ans; Log "Новый ответ на $n получен (хэш $hh)"
     if(Test-RelayHash $script:St $hh){ Set-Stale $n $hh "ответ Gemini совпадает с уже переданным раньше (хэш $hh)"; return }
   }
   if($script:Adopted.ContainsKey($n)){   # пункт 24: файл подхвачен при запуске — ответ мог быть уже вставлен вручную
     $script:Adopted.Remove($n)
-    if(Ag-HasText $ans){ Register-BlockRelayed $ans $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'answered' $hh; Set-Stage $n 'relayed' $hh; Mark-Done $n; $msg="ℹ️ Ответ на $n уже есть в Antigravity (вставлен вручную) — повторно не вставляю"; Log $msg; Tg-Send $msg | Out-Null; return }
+    if(Ag-HasText $ans){ Register-BlockRelayed $ans $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Set-Stage $n 'answered' $hh; Set-Stage $n 'relayed' $hh; Mark-Done $n; $msg="ℹ️ Ответ на $n уже есть в $(Get-IdeName) (вставлен вручную) — повторно не вставляю"; Log $msg; Tg-Send $msg | Out-Null; return }
   }
   Set-Stage $n 'answered' $hh
   Save-AnswerCache $n $ans
@@ -575,7 +645,7 @@ function Format-StatusHtml([string]$T){
 }
 function Get-StatusText{
   $m=try{ Get-ModelNow }catch{ "? ($($_.Exception.Message))" }
-  $acc=try{ if($Cfg.AgTarget -eq 'dsharness'){ [bool](DshCdp-AcceptAll -Dry).found } else { $h=Ag-GetWindow; [bool]($h -and (Find-AcceptAll $h)) } }catch{ $false }
+  $acc=try{ if((Test-IsDsh)){ [bool](DshCdp-AcceptAll -Dry).found } else { $h=Ag-GetWindow; [bool]($h -and (Find-AcceptAll $h)) } }catch{ $false }
   $pend=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -in @('sent','answered','resend','stale','operator') } | ForEach-Object { "$_ — $(Get-StageRu (Get-Stage $_))" }) -join '; '; if(!$pend){ $pend='нет' }
   $tail= try{ (Get-Content -LiteralPath $Cfg.LogFile -Encoding UTF8 -Tail 5) -join "`n" }catch{ '' }
   $st= if($script:Paused){ "⏸ Остановлен — ничего не делаю (жду «Старт»)" } else { $script:State }
@@ -586,16 +656,16 @@ function Get-StatusText{
 Состояние: $st
 Остановка по лимиту: $lim
 Автовозобновление: $auto
-Antigravity: $(if($script:AgBlock){ "НЕ принимает ответ — $($script:AgBlock.kind) с $($script:AgBlock.since.ToString('HH:mm')): $($script:AgBlock.msg)" } else { 'принимает ввод' })
+$(Get-IdeName): $(if($script:AgBlock){ "НЕ принимает ответ — $($script:AgBlock.kind) с $($script:AgBlock.since.ToString('HH:mm')): $($script:AgBlock.msg)" } else { 'принимает ввод' })
 Следующий файл в очереди: $(if($nx){$nx}else{'нет'})
 Последний переданный файл: $(if($script:LastDone){$script:LastDone}else{'за этот запуск ещё не было'})
 Незавершённые этапы: $pend
 Пауза: $(if($script:Paused){'ДА'}else{'нет'})
 Команд в очереди: $($script:Queue.Count)
 Модель Gemini: $m
-IDE: $(Get-IdeName)$(if($Cfg.AgTarget -eq 'dsharness'){" (CDP $($Cfg.DshCdpPort))"})
-Транспорт: Gemini=$($Cfg.GeminiTransport), Antigravity=$($Cfg.AgTransport)
-Кнопка Accept all в Antigravity: $(if($acc){'есть'}else{'нет'})
+IDE: $(Get-IdeName)$(if((Test-IsDsh)){" (CDP $(Get-IdePort))"})
+Транспорт: Gemini=$($Cfg.GeminiTransport), $(Get-IdeName)=$(if(Test-IsDsh){'cdp'}else{$Cfg.AgTransport})
+Кнопка Accept all в $(Get-IdeName): $(if($acc){'есть'}else{'нет'})
 Лимиты: $(Quota-Text)
 Выключение компьютера: $(try{ $sp=Get-ShutdownPlan; if($sp){ "$(Format-ShutWhen $sp.at) ($(if($sp.force){'таймер Windows'}else{'выключит GGskript'}))" } else { 'не запланировано' } }catch{ '?' })
 
@@ -604,7 +674,7 @@ $tail
 "@
 }
 # Пункт 25B/C: в режиме СТОП — никаких лимитов, модели и окон. Только Telegram/команды и таймер выключения ПК.
-$script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','fwdans','fwdans-prep','fwdtext','resendfile','gemask','agask','fwdans-pc')
+$script:WindowKinds=@('gemini','ag','relay','force','lastanswer','accept','limits','acctchanged','fwdans','fwdans-prep','fwdtext','resendfile','gemask','agask','fwdans-pc')
 function Get-StopRefusal([string]$K){ "⏹ Сейчас СТОП — окна не трогаю, команду ($K) не выполняю. Нажмите «Старт», потом повторите." }
 function Invoke-StoppedStep{
   $script:State='⏸ Остановлен — ничего не делаю (жду «Старт»)'
@@ -633,7 +703,7 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
   $c.src=$Source
   if($script:Paused -and $c.k -in $script:WindowKinds){ Log "Стоп: команда $($c.k) отклонена"; Tg-Send (Get-StopRefusal $c.k) | Out-Null; return }
   switch($c.k){
-    'help'    { Tg-Send $HelpText -Html -Markup (Get-TgReplyMarkup) | Out-Null }
+    'help'    { Tg-Send (Convert-TgIdeText $HelpText) -Html -Markup (Get-TgReplyMarkup) | Out-Null }
     'status'  { Tg-Send (Format-StatusHtml (Get-StatusText)) -Html | Out-Null }
     'shutdown'       { Request-Shutdown $c.spec $Source $ReplyTo }
     'shutdowncancel' { Cancel-Shutdown }
@@ -645,7 +715,7 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
       if($script:LimitStop){ Resume-Work 'по команде' } elseif(-not $qb -and -not $wasP){ Tg-Send "▶️ Продолжаю работу. Следующий файл: $(if($n=Next-FileName){$n}else{'новых файлов пока нет'})" | Out-Null } }
     'ide' { Set-IdeTarget ([string]$c.v) $Source }
     'autoaccept' { if($null -ne $c.on){ Set-AutoAccept ([bool]$c.on) $Source } else { Tg-Send "Автопринятие «Accept all»: $(if($Cfg.AutoAcceptAll){'ВКЛ'}else{'выкл'}). «автопринятие вкл» / «автопринятие выкл»." | Out-Null } }
-    'autoallow' { if($null -ne $c.on){ Set-AutoAllow ([bool]$c.on) $Source } else { Tg-Send "Автоподтверждение запросов Antigravity: $(if($Cfg.AutoAllowPrompts){'ВКЛ'}else{'выкл'}). Включить/выключить: «автоподтверждение вкл» / «автоподтверждение выкл»." | Out-Null } }
+    'autoallow' { if($null -ne $c.on){ Set-AutoAllow ([bool]$c.on) $Source } else { Tg-Send "Автоподтверждение запросов $(Get-IdeName): $(if($Cfg.AutoAllowPrompts){'ВКЛ'}else{'выкл'}). Включить/выключить: «автоподтверждение вкл» / «автоподтверждение выкл»." | Out-Null } }
     'shot'    { try{ Send-Screenshot }catch{ Tg-Send "Не удалось сделать скриншот: $($_.Exception.Message)" | Out-Null } }
     'confirm' { if($Source -eq 'tg' -and $ReplyTo -and (Resolve-TextAnswer 'confirm' $ReplyTo)){ return }
       if(-not $script:PendingConfirm -and $Source -eq 'tg' -and (Resolve-TextAnswer 'confirm' 0)){ return }
@@ -708,10 +778,10 @@ function Handle-Command([string]$Text,[string]$Source='pc',[int64]$ReplyTo=0){
     default   {
       if($Cfg.TgConfirmAg -and $Source -eq 'tg' -and ($c.k -in @('ag','gemini')) -and -not $c.confirmed){
         $script:PendingConfirm=@{ c=$c; time=Get-Date }
-        Tg-Send "Отправить в $(if($c.k -eq 'ag'){'Antigravity'}else{'Gemini'}): «$(Format-Short $c.arg 200)»? Ответь «да» (5 минут) или «нет»." | Out-Null
+        Tg-Send "Отправить в $(if($c.k -eq 'ag'){"$(Get-IdeName)"}else{'Gemini'}): «$(Format-Short $c.arg 200)»? Ответь «да» (5 минут) или «нет»." | Out-Null
         return
       }
-      if($c.k -eq 'relay' -and $c.whole -and $Source -eq 'tg'){ $script:Queue.Enqueue(@{ k='fwdans-prep'; src=$Source }); Tg-Send '🕐 «передай весь ответ» = «перешли ответ в Antigravity»: возьму последний ответ Gemini и покажу, что уйдёт.' | Out-Null; return }
+      if($c.k -eq 'relay' -and $c.whole -and $Source -eq 'tg'){ $script:Queue.Enqueue(@{ k='fwdans-prep'; src=$Source }); Tg-Send "🕐 «передай весь ответ» = «перешли ответ в $(Get-IdeName)»: возьму последний ответ Gemini и покажу, что уйдёт." | Out-Null; return }
       $script:Queue.Enqueue($c); if($script:Busy){ Tg-Send 'Принял, выполню после текущего шага.' | Out-Null } else { Tg-Send 'Принял, выполняю.' | Out-Null }
     }
   }
@@ -726,19 +796,21 @@ function ConvertFrom-PcArg([string]$A){ $a=$A.Trim(); if($a -match '^b64:(.*)$')
 function Reset-CdpRecheck{ $script:CdpDownUntil=$null; $script:AgCdpDownUntil=$null }
 function Invoke-PcButton([string]$K,[string]$Arg){
   $k=$K.ToLower()
-  if($script:Paused -and $k -in 'gemask','agask','togemini','toag','answer'){ Log "Стоп: кнопка панели $k не выполнена — нажмите «Старт»"; return }
+  if($script:Paused -and $k -in 'gemask','agask','togemini','toag','answer','acct'){ Log "Стоп: кнопка панели $k не выполнена — нажмите «Старт»"; return }
   switch($k){
-    'cdpcheck' { Reset-CdpRecheck; Log '🌐 Порты отладки: проверю CDP Gemini и Antigravity при следующем обращении (кнопка панели)' }
+    'cdpcheck' { Reset-CdpRecheck; Log "🌐 Порты отладки: проверю CDP Gemini и $(Get-IdeName) при следующем обращении (кнопка панели)" }
     'gemask'   { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log 'Gemini: пустой текст — ничего не отправлено'; return }; $script:Queue.Enqueue(@{ k='gemask'; text=$t.Trim(); src='pc' }); Log "✨ Gemini: текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}) и покажу ответ здесь" }
-    'agask'    { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log 'Antigravity: пустой текст — ничего не отправлено'; return }; $script:Queue.Enqueue(@{ k='agask'; text=$t.Trim(); src='pc' }); Log "🛠 Antigravity: текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}); ответом будет новый отчёт агента" }
+    'agask'    { $t=ConvertFrom-PcArg $Arg; if(-not $t.Trim()){ Log "$(Get-IdeName): пустой текст — ничего не отправлено"; return }; $script:Queue.Enqueue(@{ k='agask'; text=$t.Trim(); src='pc' }); Log "🛠 $(Get-IdeName): текст принят ($($t.Length) симв.), отправлю$(if($script:Busy){' после текущего шага'}); ответом будет новый отчёт агента" }
     'togemini' { $f=@(Get-Files) | Select-Object -Last 1; if(-not $f){ Log 'В Downloads нет отчётов агента — пересылать нечего.'; return }; $script:Queue.Enqueue(@{ k='resendfile'; name=$f.Name; src='pc' }) }
-    'toag'     { $script:Queue.Enqueue(@{ k='fwdans-pc'; src='pc' }); Log '🕐 Беру последний ответ Gemini целиком для Antigravity…' }
+    'toag'     { $script:Queue.Enqueue(@{ k='fwdans-pc'; src='pc' }); Log "🕐 Беру последний ответ Gemini целиком для $(Get-IdeName)…" }
     'answer'   { $script:Queue.Enqueue(@{ k='lastanswer'; src='pc' }) }
+    'acct'     { if(@($script:Queue.ToArray() | Where-Object { $_.k -eq 'acctchanged' }).Count){ Log 'Аккаунт: проверка уже в очереди — повторно не добавляю' } else { $script:Queue.Enqueue(@{ k='acctchanged'; src='pc' }) } }
     default    { Log "Неизвестная кнопка панели: $K" }
   }
 }
 function Run-ActionCore($c){
   switch($c.k){
+    'acctchanged' { Assert-NotPaused 'проверку аккаунта'; [void](Invoke-AccountSwitched) }
     'limits' { Tg-Send ('📊 Лимиты, '+(Check-Quotas)) | Out-Null }
     'gemini' {
       Assert-NotPaused 'сообщение в Gemini'
@@ -752,28 +824,28 @@ function Run-ActionCore($c){
       if(-not (Is-Argon $m2)){ Enter-LimitStop $m2 "Ответ на сообщение пришёл от модели «$m2» и НЕ передан."; return }
       Check-OurPrompt ([int]$ctx.pBefore)
       $code=Gem-CopyCode
-      if($code){ $hh=Check-Fresh $code; Ag-Send -Text $code -Label 'ответ на сообщение из Telegram'; $script:TurnSide='antigravity'; Register-BlockRelayed $code $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Ответ на сообщение дала модель $m2; блок Markdown ($($code.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $code)») передан в Antigravity"; Log $msg; Tg-Send $msg | Out-Null }
-      else { $a=Gem-CopyWhole; Tg-Send "Ответ Gemini (модель $m2; блока Markdown нет, в Antigravity не передавал):`n`n$a" | Out-Null }
+      if($code){ $hh=Check-Fresh $code; Ag-Send -Text $code -Label 'ответ на сообщение из Telegram'; $script:TurnSide='antigravity'; Register-BlockRelayed $code $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Ответ на сообщение дала модель $m2; блок Markdown ($($code.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $code)») передан в $(Get-IdeName)"; Log $msg; Tg-Send $msg | Out-Null }
+      else { $a=Gem-CopyWhole; Tg-Send "Ответ Gemini (модель $m2; блока Markdown нет, в $(Get-IdeName) не передавал):`n`n$a" | Out-Null }
     }
-    'ag' { Assert-NotPaused 'текст в Antigravity'; Assert-Quota -Ag; Ag-Send -Text $c.arg -Label 'текст из Telegram'; Log 'Текст отправлен в Antigravity'; Tg-Send 'Отправил в Antigravity.' | Out-Null }
+    'ag' { Assert-NotPaused "текст в $(Get-IdeName)"; Assert-Quota -Ag; Ag-Send -Text $c.arg -Label 'текст из Telegram'; Log "Текст отправлен в $(Get-IdeName)"; Tg-Send "Отправил в $(Get-IdeName)." | Out-Null }
     'relay' {
-      Assert-NotPaused 'передачу ответа в Antigravity'
+      Assert-NotPaused "передачу ответа в $(Get-IdeName)"
       Assert-Quota -Gemini -Ag
       $m=Assert-Argon 'Ответ по команде «передай ответ» НЕ передан.'
       if($c.whole){ $a=Gem-CopyWhole } else { $a=Gem-CopyCode; if(!$a){ Tg-Send 'В последнем ответе Gemini нет блока Markdown. Напиши «передай весь ответ», если нужно передать его целиком.' | Out-Null; return } }
       if(!$a){ throw 'не нашёл ответ Gemini' }
       $hh=Check-Fresh $a
       Ag-Send -Text $a -Label 'ответ Gemini (по команде)'; $script:TurnSide='antigravity'; Register-BlockRelayed $a $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State
-      $msg="✅ По команде передал в Antigravity $(if($c.whole){'весь ответ'}else{'блок Markdown'}) (модель $m, $($a.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null
+      $msg="✅ По команде передал в $(Get-IdeName) $(if($c.whole){'весь ответ'}else{'блок Markdown'}) (модель $m, $($a.Length) симв., хэш $hh, первая строка «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null
     }
     'force' {
-      Assert-NotPaused 'передачу ответа в Antigravity'
+      Assert-NotPaused "передачу ответа в $(Get-IdeName)"
       Assert-Quota -Gemini -Ag
       $m=Assert-Argon 'Ответ («передай всё равно») НЕ передан.'
       $a=Gem-CopyCode; if(!$a){ Tg-Send 'В последнем ответе Gemini нет блока Markdown — передавать нечего.' | Out-Null; return }
       $hh=Get-Hash8 $a; $sf=Get-StaleFile
       if($sf){ Relay-ToAg $sf.Name $a $hh $m ' (принудительно, по команде «передай всё равно»)' -NoGate; $script:StaleNotified.Remove($sf.Name) }
-      else { Ag-Send -Text $a -Label 'ответ Gemini (принудительно)'; $script:TurnSide='antigravity'; Register-BlockRelayed $a $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Принудительно передал в Antigravity блок Markdown (хэш $hh, «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null }
+      else { Ag-Send -Text $a -Label 'ответ Gemini (принудительно)'; $script:TurnSide='antigravity'; Register-BlockRelayed $a $hh; Add-RelayHash $script:St $hh $Cfg.HashKeep; Save-State; $msg="✅ Принудительно передал в $(Get-IdeName) блок Markdown (хэш $hh, «$(Get-FirstLine $a)»)"; Log $msg; Tg-Send $msg | Out-Null }
     }
     'resendstale' {
       $sf=Get-StaleFile
@@ -782,7 +854,7 @@ function Run-ActionCore($c){
     }
     'lastanswer' { $a=Gem-CopyWhole; if(!$a){ throw 'не нашёл ответ Gemini' }; $p=Save-FullAnswer ('last_'+(Get-Date).ToString('yyyyMMdd_HHmmss')+'.md') $a; if($p){ Send-AnswerCopy $p 'последнее сообщение' } else { Tg-Send "Последний ответ Gemini:`n`n$a" | Out-Null } }
     { $_ -in 'fwdtext','fwdans-prep','resendfile','gemask','agask','fwdans-pc' } { Invoke-ChatAction $c }
-    'accept' { if(Try-AcceptAll){ Tg-Send 'Нажал «Accept all».' | Out-Null } else { Tg-Send 'Кнопки «Accept all» в Antigravity сейчас нет.' | Out-Null } }
+    'accept' { if(Try-AcceptAll){ Tg-Send 'Нажал «Accept all».' | Out-Null } else { Tg-Send "Кнопки «Accept all» в $(Get-IdeName) сейчас нет." | Out-Null } }
   }
 }
 
@@ -809,27 +881,33 @@ function Invoke-GitCheckpoint{
     Log "Git-чекпоинт перед Accept all: $repo ($($st.Count) изм.)"; $true
   }catch{ Log "Git-чекпоинт не удался: $($_.Exception.Message)"; $false }
 }
+# 25.10: антидребезг — после успешного нажатия следующее не раньше AcceptAllMinGapSec (кнопка ещё не исчезла / агент снова правит)
+$script:LastAcceptOk=[datetime]::MinValue
+function Test-AcceptGapOk{ ((Get-Date)-$script:LastAcceptOk).TotalSeconds -ge [double]$Cfg.AcceptAllMinGapSec }
 function Try-AcceptAll([switch]$Report){
   if($script:Paused){ return $false }
-  if($Cfg.AgTarget -eq 'dsharness'){   # пункт 51: Harness — только DOM через CDP
-    $d=$null; try{ $d=DshCdp-AcceptAll -Dry }catch{ return $false }
-    if(-not $d -or -not $d.found -or $d.busy){ return $false }
+  if((Test-IsDsh)){   # пункт 51: Harness — только DOM через CDP
+    $eb=[bool]$Cfg.AcceptAllWhileBusy; if(-not (Test-AcceptGapOk)){ return $false }
+    $d=$null; try{ $d=DshCdp-AcceptAll -Dry -EvenBusy:$eb }catch{ return $false }
+    if(-not $d -or -not $d.found -or ($d.busy -and -not $eb)){ return $false }
     if(-not (Invoke-GitCheckpoint) -and $Cfg.GitCheckpointRequired){ Tg-Send '⛔ Accept all НЕ нажат: не удался git-чекпоинт (GitCheckpointRequired=true).' -DedupMin 30 | Out-Null; return $false }
     if(Test-StopNow){ return $false }
-    $r=$null; try{ $r=DshCdp-AcceptAll }catch{ Log "Accept all (Harness): $($_.Exception.Message)" }
-    if($r -and $r.ok){ Log '✅ Принять все нажато в DeepSeek Harness (CDP, без фокуса)'; if($Report){ Tg-Send '✅ DeepSeek Harness: «Принять все» нажато' | Out-Null }; return $true }
+    $r=$null; try{ $r=DshCdp-AcceptAll -EvenBusy:$eb }catch{ Log "Accept all (Harness): $($_.Exception.Message)" }
+    if($r -and $r.ok){ $script:LastAcceptOk=Get-Date; Log "✅ Принять все нажато в $(Get-IdeName) (CDP, без фокуса)"; if($Report){ Tg-Send "✅ $(Get-IdeName): «Принять все» нажато" | Out-Null }; return $true }
     return $false
   }
   $h=Ag-GetWindow; if(!$h){ return $false }
   # пункт 46: в Antigravity «Accept all» — <span> с onClick, не Button: UIA его не видит. С CDP — только DOM (span), агент не должен работать.
   if($Cfg.AgTransport -eq 'cdp'){
-    $d=$null; try{ $d=AgCdp-AcceptAll -Dry }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
+    # 25.10: AcceptAllWhileBusy — жму сразу по обнаружению, и пока агент работает (только DOM-click, без фокуса; Cancel/Reject — никогда)
+    $eb=[bool]$Cfg.AcceptAllWhileBusy; if(-not (Test-AcceptGapOk)){ return $false }
+    $d=$null; try{ $d=AgCdp-AcceptAll -Dry -EvenBusy:$eb }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
     if($d){
-      if(-not $d.found -or $d.busy){ return $false }
+      if(-not $d.found -or ($d.busy -and -not $eb)){ return $false }
       if(-not (Invoke-GitCheckpoint) -and $Cfg.GitCheckpointRequired){ Tg-Send '⛔ Accept all НЕ нажат: не удался git-чекпоинт (GitCheckpointRequired=true).' -DedupMin 30 | Out-Null; return $false }
       if(Test-StopNow){ return $false }
-      $r=$null; try{ $r=AgCdp-AcceptAll }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
-      if($r -and $r.ok){ $nf=if($null -ne $r.files){ [string]$r.files } else { '?' }; Log "✅ Accept all нажат ($nf files) (CDP, без фокуса)"; if($Report){ Tg-Send "✅ Accept all нажат ($nf files)" | Out-Null }; return $true }
+      $r=$null; try{ $r=AgCdp-AcceptAll -EvenBusy:$eb }catch{ Log "Accept all через CDP: $($_.Exception.Message)" }
+      if($r -and $r.ok){ $script:LastAcceptOk=Get-Date; $nf=if($null -ne $r.files){ [string]$r.files } else { '?' }; Log "✅ Accept all нажат ($nf files) (CDP, без фокуса$(if($r.busy){', агент ещё работает'}))"; if($Report){ Tg-Send "✅ Accept all нажат ($nf files)" | Out-Null }; return $true }
       return $false
     }
   }
@@ -854,12 +932,12 @@ function Find-QueuedItems($h){
   }
 }
 function Check-AgQueue{
-  if($Cfg.AgTarget -eq 'dsharness'){ return }
+  if((Test-IsDsh)){ return }
   $h=Ag-GetWindow; if(!$h){ return }
   $items=@(Find-QueuedItems $h)
   foreach($k in @($script:QueueSeen.Keys)){ if(-not ($items | Where-Object { $_.key -eq $k })){ $script:QueueSeen.Remove($k); $script:QueueTries.Remove($k) } }
   foreach($it in $items){
-    $k=$it.key; if(!$script:QueueSeen.ContainsKey($k)){ $script:QueueSeen[$k]=Get-Date; Log "Antigravity: в очереди сообщение «$(Get-NormKey $k 50)…»" }
+    $k=$it.key; if(!$script:QueueSeen.ContainsKey($k)){ $script:QueueSeen[$k]=Get-Date; Log "$(Get-IdeName): в очереди сообщение «$(Get-NormKey $k 50)…»" }
     $age=((Get-Date)-$script:QueueSeen[$k]).TotalSeconds
     if($age -lt $Cfg.AgQueueWaitSec){ continue }
     $tries=[int]$script:QueueTries[$k]; if($tries -ge $Cfg.AgQueueMaxTries){ continue }
@@ -877,10 +955,10 @@ function Check-AgQueue{
       $script:QStill=[bool](@(Find-QueuedItems $h) | Where-Object { $_.key -eq $k })
     }; $still=$script:QStill }catch{ continue } }
     if(-not $still){
-      $msg="⏩ Antigravity завис на предыдущем задании (сообщение $([int]$age) сек в очереди), нажал «отправить сейчас» для $label — сообщение ушло агенту"; Log $msg; Tg-Send $msg | Out-Null
+      $msg="⏩ $(Get-IdeName) завис на предыдущем задании (сообщение $([int]$age) сек в очереди), нажал «отправить сейчас» для $label — сообщение ушло агенту"; Log $msg; Tg-Send $msg | Out-Null
       $script:QueueSeen.Remove($k); $script:QueueTries.Remove($k)
     } else {
-      $msg="❌ Нажал «отправить сейчас» для $label (попытка $($tries+1) из $($Cfg.AgQueueMaxTries)), но сообщение всё ещё в очереди Antigravity"
+      $msg="❌ Нажал «отправить сейчас» для $label (попытка $($tries+1) из $($Cfg.AgQueueMaxTries)), но сообщение всё ещё в очереди $(Get-IdeName)"
       if($tries+1 -ge $Cfg.AgQueueMaxTries){ $msg+='. Больше не пробую — нужна ручная проверка.' }
       Log $msg; Tg-Send $msg | Out-Null
     }
@@ -893,7 +971,7 @@ function Pump{ Poll-Tg; Sweep-TgPrompts; try{ Check-Shutdown }catch{ Log "Вык
   # пункт 38: «Стоп» посреди любого рабочего шага (вставка, копирование, прикрепление, ожидание) — прерываем его сразу
   if($script:Paused -and $script:Busy){ throw [GG.RelayPausedException]::new('СТОП — текущее действие прервано') }
   if($script:Paused){ return }   # на стопе: никаких фоновых действий (автоподтверждение, Accept all, ответ Antigravity)
-  Invoke-AuxDuringWait; Invoke-AutoAllowTick; Invoke-AutoAcceptTick; try{ Check-AgWatch }catch{ if((Get-ErrorKind $_) -eq 'paused'){ throw }; Log "Ответ Antigravity: $($_.Exception.Message)" } }
+  Invoke-AuxDuringWait; Invoke-AutoAllowTick; Invoke-AutoAcceptTick; try{ Check-AgWatch }catch{ if((Get-ErrorKind $_) -eq 'paused'){ throw }; Log "Ответ $(Get-IdeName): $($_.Exception.Message)" } }
 # Ожидание ответа Gemini, которое «Стоп» может прервать (пункт 25B). Внутри — только чтение окна Gemini.
 function Wait-GemAnswerStoppable($ctx){ $script:AbortOnStop=$true; try{ Gem-WaitAnswer $ctx } finally { $script:AbortOnStop=$false } }
 # AcceptAllDuringWait: во время долгого ожидания ответа Gemini нажимать Accept all (и смотреть очередь Antigravity).
@@ -910,14 +988,14 @@ $script:LastAutoAllow=Get-Date; $script:InAutoAllow=$false; $script:AutoAllowWar
 function Set-AutoAllow([bool]$On,[string]$Source='pc'){
   $Cfg.AutoAllowPrompts=$On
   try{ Save-SettingValue $Cfg.SettingsFile 'AutoAllowPrompts' $On }catch{ Log "Автоподтверждение: не удалось сохранить в relay_settings.json ($($_.Exception.Message))" }
-  Log "Автоподтверждение запросов Antigravity: $(if($On){'ВКЛ'}else{'выкл'}) ($Source)"
-  Tg-Send "Автоподтверждение запросов Antigravity: $(if($On){'ВКЛ — отвечаю «Yes, allow this time» + Submit (никогда «always»/«No»)'}else{'выкл'})." | Out-Null
+  Log "Автоподтверждение запросов $(Get-IdeName): $(if($On){'ВКЛ'}else{'выкл'}) ($Source)"
+  Tg-Send "Автоподтверждение запросов $(Get-IdeName): $(if($On){'ВКЛ — отвечаю «Yes, allow this time» + Submit (никогда «always»/«No»)'}else{'выкл'})." | Out-Null
   try{ Write-Status -Force }catch{}
 }
 function Try-AutoAllow{
   if(-not $Cfg.AutoAllowPrompts -or (Test-StopNow)){ return $false }
   $r=$null
-  if($Cfg.AgTarget -eq 'dsharness'){ try{ $r=DshCdp-AllowPrompt }catch{ $r=$null }; if($r -and $r.ok){ Log "Автоподтверждение (Harness): «$(Format-Short ([string]$r.opt) 40)» (CDP, без фокуса)"; return $true }; return $false }
+  if((Test-IsDsh)){ try{ $r=DshCdp-AllowPrompt }catch{ $r=$null }; if($r -and $r.ok){ Log "Автоподтверждение (Harness): «$(Format-Short ([string]$r.opt) 40)» (CDP, без фокуса)"; return $true }; return $false }
   if($Cfg.AgTransport -eq 'cdp'){ try{ $r=AgCdp-AllowPrompt; if($r -and $r.ok){ $r.how='CDP, без фокуса' } }catch{ $r=$null } }
   if(-not ($r -and $r.ok)){
     $h=Ag-GetWindow
@@ -943,7 +1021,7 @@ function Invoke-AutoAllowTick{
 $script:LastAutoAccept=Get-Date; $script:InAutoAccept=$false
 function Invoke-AutoAcceptTick{
   if(Test-StopNow){ return }
-  if(-not $Cfg.AutoAcceptAll -or ($Cfg.AgTransport -ne 'cdp' -and $Cfg.AgTarget -ne 'dsharness') -or $script:InAutoAccept -or [int]$script:FocusDepth -gt 0){ return }
+  if(-not $Cfg.AutoAcceptAll -or ($Cfg.AgTransport -ne 'cdp' -and -not (Test-IsDsh)) -or $script:InAutoAccept -or [int]$script:FocusDepth -gt 0){ return }
   if($script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')){ return }
   if($Cfg.AcceptAllEverySec -le 0 -or ((Get-Date)-$script:LastAutoAccept).TotalSeconds -lt $Cfg.AcceptAllEverySec){ return }
   $script:LastAutoAccept=Get-Date; $script:LastAccept=Get-Date; $script:InAutoAccept=$true
@@ -951,12 +1029,12 @@ function Invoke-AutoAcceptTick{
 }
 # пункт 51: сменить IDE-сторону — только когда работа остановлена (⏸ Стоп), с сохранением в relay_settings.json
 function Set-IdeTarget([string]$V,[string]$Source='pc'){
-  if(-not $V){ Tg-Send "IDE сейчас: $(Get-IdeName). Сменить: «ide antigravity» или «ide dsharness» (только при ⏸ Стоп)." | Out-Null; return }
+  if(-not $V){ Tg-Send "IDE сейчас: $(Get-IdeName). Сменить: «ide antigravity», «ide dsharness» или «ide cursor» (только при ⏸ Стоп)." | Out-Null; return }
   if($V -eq $Cfg.AgTarget){ Tg-Send "IDE уже: $(Get-IdeName)." | Out-Null; return }
   if(-not $script:Paused){ $m='⛔ IDE меняю только при «⏸ Стоп» — сначала остановите работу.'; Log $m; Tg-Send $m | Out-Null; return }
   $Cfg.AgTarget=$V; $script:AgPending=$null; $script:AgBlock=$null
   try{ Save-SettingValue $Cfg.SettingsFile 'AgTarget' $V }catch{ Log "IDE: не удалось сохранить в relay_settings.json ($($_.Exception.Message))" }
-  $m="🛠 IDE переключена: $(Get-IdeName)$(if($V -eq 'dsharness'){" (только через порт $($Cfg.DshCdpPort))"}) ($Source)"; Log $m; try{ [void](Register-TgCommands) }catch{}; try{ Tg-Send $m -Markup (Get-TgReplyMarkup) | Out-Null }catch{ Tg-Send $m | Out-Null }
+  $m="🛠 IDE переключена: $(Get-IdeName)$(if($V -in @('dsharness','cursor')){" (только через порт $(Get-IdePort))"}) ($Source)"; Log $m; try{ [void](Register-TgCommands) }catch{}; try{ Tg-Send $m -Markup (Get-TgReplyMarkup) | Out-Null }catch{ Tg-Send $m | Out-Null }
   try{ Write-Status -Force }catch{}
 }
 function Set-AutoAccept([bool]$On,[string]$Source='pc'){
@@ -1061,7 +1139,7 @@ function Start-Procedure([switch]$DryRun){
     Send-StartReport $rep -DryRun:$DryRun; return $false
   }
   # 2. Лимиты
-  if($DryRun){ try{ $aq=Get-AgQuota; $rep+="2) Лимиты: $ide 5 ч осталось $($aq.h5.rem)%, неделя осталось $($aq.wk.rem)% (страницу лимитов Gemini в пробном прогоне не открываю)" }catch{ $rep+="2) Лимиты Antigravity: ошибка $($_.Exception.Message)" } }
+  if($DryRun){ try{ $aq=Get-AgQuota; $rep+="2) Лимиты: $ide 5 ч осталось $($aq.h5.rem)%, неделя осталось $($aq.wk.rem)% (страницу лимитов Gemini в пробном прогоне не открываю)" }catch{ $rep+="2) Лимиты $(Get-IdeName): ошибка $($_.Exception.Message)" } }
   else{
     if(-not $script:Q -or ((Get-Date)-$script:LastQuota).TotalMinutes -ge 2){ try{ Check-Quotas | Out-Null }catch{ Log "Лимиты: $($_.Exception.Message)" }; $script:LastQuota=Get-Date }
     $rep+="2) Лимиты: $((Quota-Text) -replace "`n",'; ')"
@@ -1070,13 +1148,13 @@ function Start-Procedure([switch]$DryRun){
   if($qb -and $script:QStopG -and -not $script:QStopA -and $Cfg.MirrorRelay){
     # пункт 46: Gemini исчерпан, но дописанный блок Argon в Antigravity передам (наблюдатель)
     Update-AutoPlan -Quiet
-    $rep+="   ⛔ исчерпан: $qb — в Gemini ничего не отправляю; готовый блок Argon (если не передан) передам в Antigravity"
-    $rep+='👉 Ход: Antigravity, если в Gemini есть непереданный блок; иначе жду сброса лимита Gemini'
+    $rep+="   ⛔ исчерпан: $qb — в Gemini ничего не отправляю; готовый блок Argon (если не передан) передам в $(Get-IdeName)"
+    $rep+="👉 Ход: $(Get-IdeName), если в Gemini есть непереданный блок; иначе жду сброса лимита Gemini"
     Send-StartReport $rep -DryRun:$DryRun; return $true
   }
   if($qb -and $script:QStopA -and -not $script:QStopG){
     Update-AutoPlan -Quiet
-    $rep+="   ⛔ исчерпан: $qb — в Antigravity ничего не вставляю; готовые отчёты в Gemini отправлять буду"
+    $rep+="   ⛔ исчерпан: $qb — в $(Get-IdeName) ничего не вставляю; готовые отчёты в Gemini отправлять буду"
     $qb=''
   }
   if($qb){
@@ -1092,20 +1170,20 @@ function Start-Procedure([switch]$DryRun){
     if($Cfg.AutoSwitchModel -and -not $DryRun){
       $old=$m
       try{ $m=Switch-ToArgon; $rep+="3) Модель Gemini: была «$old» — переключил на «$m»" }
-      catch{ $rep+="3) Модель Gemini: «$old» — НЕ $($Cfg.ModelMustContain), переключить не удалось ($($_.Exception.Message))"; Enter-LimitStop $old 'Обнаружено при запуске.'; $rep+='👉 Ход: Antigravity, если в Gemini есть дописанный непереданный блок Argon (передам); иначе жду нужную модель'; Send-StartReport $rep; return $true }
+      catch{ $rep+="3) Модель Gemini: «$old» — НЕ $($Cfg.ModelMustContain), переключить не удалось ($($_.Exception.Message))"; Enter-LimitStop $old 'Обнаружено при запуске.'; $rep+="👉 Ход: $(Get-IdeName), если в Gemini есть дописанный непереданный блок Argon (передам); иначе жду нужную модель"; Send-StartReport $rep; return $true }
     } else {
       $rep+="3) Модель Gemini: «$m» — НЕ $($Cfg.ModelMustContain)$(if(-not $DryRun){', передачу останавливаю'})"
       if(-not $DryRun){ Enter-LimitStop $m 'Обнаружено при запуске.' }
-      $rep+='👉 Ход: Antigravity, если в Gemini есть дописанный непереданный блок Argon (передам); иначе жду нужную модель'; Send-StartReport $rep -DryRun:$DryRun; return $true
+      $rep+="👉 Ход: $(Get-IdeName), если в Gemini есть дописанный непереданный блок Argon (передам); иначе жду нужную модель"; Send-StartReport $rep -DryRun:$DryRun; return $true
     }
   } else { $rep+="3) Модель Gemini: $m ✅" }
   $gen=$false; try{ $gen=[bool](Gem-IsGenerating) }catch{}
   if($gen){ $rep+="   Gemini сейчас генерирует ответ — жду, пока закончит (повтор через $($Cfg.StartRetrySec) сек)"; $rep+='👉 Ход: Gemini — генерирует'; Send-StartReport $rep -DryRun:$DryRun; return $false }
   $hl=$null; if(-not (Test-IsDsh)){ try{ $hl=Get-AgHealth }catch{} }
-  if($hl -and -not $hl.ok){ $rep+="   Antigravity не отвечает ($($hl.reasons -join '; ')) — повтор через $($Cfg.StartRetrySec) сек"; $rep+='👉 Ход: ничей — жду Antigravity'; Send-StartReport $rep -DryRun:$DryRun; return $false }
+  if($hl -and -not $hl.ok){ $rep+="   $(Get-IdeName) не отвечает ($($hl.reasons -join '; ')) — повтор через $($Cfg.StartRetrySec) сек"; $rep+="👉 Ход: ничей — жду $(Get-IdeName)"; Send-StartReport $rep -DryRun:$DryRun; return $false }
   $qn=0; $dshBusy=$false
   if(Test-IsDsh){ try{ $dshBusy=DshCdp-IsBusy }catch{} } else { try{ $qn=@(Find-QueuedItems $ahH).Count }catch{} }
-  $rep+="   Gemini: не генерирует; ${ide}: $(if(Test-IsDsh){"связь по порту $($Cfg.DshCdpPort)$(if($dshBusy){', агент работает'})"}else{'окно отвечает'})$(if($qn){", в очереди $qn сообщ. (агент занят)"})"
+  $rep+="   Gemini: не генерирует; ${ide}: $(if(Test-IsDsh){"связь по порту $(Get-IdePort)$(if($dshBusy){', агент работает'})"}else{'окно отвечает'})$(if($qn){", в очереди $qn сообщ. (агент занят)"})"
   # 4. Самый новый файл (пункт 24)
   $lp=$null; try{ $lp=Gem-LastReportPrompt }catch{}
   $rep+='4) Файлы:'
@@ -1145,33 +1223,33 @@ function Start-Procedure([switch]$DryRun){
   $inAg=$null
   if($pk){
     $rep+="   Gemini: ответ после последнего запроса — $(if($pk.answered){'есть'}else{'нет'}); блоки: $(Format-Langs $pk.labels)$(if($pk.answered -and -not $pk.md){" — блока '$($Cfg.CodeBlockLang)' НЕТ"})"
-    if($pk.code){ try{ $inAg=[bool](Ag-HasText $pk.code) }catch{}; $rep+="   Antigravity: ответ («$(Get-FirstLine $pk.code)») в чате Antigravity — $(if($inAg){'ЕСТЬ'}else{'нет'})" }
-    elseif($pk.md){ $rep+='   Antigravity: текст блока без копирования не прочитан — сверю при копировании (если уже вставлен — повторно не вставлю)' }
+    if($pk.code){ try{ $inAg=[bool](Ag-HasText $pk.code) }catch{}; $rep+="   $(Get-IdeName): ответ («$(Get-FirstLine $pk.code)») в чате $(Get-IdeName) — $(if($inAg){'ЕСТЬ'}else{'нет'})" }
+    elseif($pk.md){ $rep+="   $(Get-IdeName): текст блока без копирования не прочитан — сверю при копировании (если уже вставлен — повторно не вставлю)" }
   }
   $st=Get-Stage $n; $turn=''
   if($askNewest){ $turn="ваш — ответьте в Telegram, отправлять ли $askNewest в Gemini" }
   elseif($tr -and $tr.pending){ $turn="ничей — про $n решу, когда найду окно Gemini" }
-  elseif($st -eq 'skipped' -and $lp -eq $n -and $inAg){ $turn="Antigravity — $n пропущен скриптом (отправлен вручную), ответ Gemini на него уже у агента; жду следующий файл" }
+  elseif($st -eq 'skipped' -and $lp -eq $n -and $inAg){ $turn="$(Get-IdeName) — $n пропущен скриптом (отправлен вручную), ответ Gemini на него уже у агента; жду следующий файл" }
   elseif($st -eq 'skipped'){ $turn="ничей — $n пропущен; жду новый файл" }
   elseif(Is-Done $n){
     if($st -eq 'relayed' -and $lp -eq $n -and $pk -and $pk.code -and $inAg -eq $false -and -not $DryRun -and $Cfg.AutoDecide){
-      $turn="Antigravity — ответ на $n по учёту передан; в окне Antigravity не виден (через окно читается не всё), повторно НЕ вставляю (авторешение); жду следующий файл"
-      Log "Авторешение: ответ на $n по учёту передан, в Antigravity не виден — повторно не вставляю (безопасный вариант)"
+      $turn="$(Get-IdeName) — ответ на $n по учёту передан; в окне $(Get-IdeName) не виден (через окно читается не всё), повторно НЕ вставляю (авторешение); жду следующий файл"
+      Log "Авторешение: ответ на $n по учёту передан, в $(Get-IdeName) не виден — повторно не вставляю (безопасный вариант)"
     }
     elseif($st -eq 'relayed' -and $lp -eq $n -and $pk -and $pk.code -and $inAg -eq $false -and -not $DryRun){
-      $turn="ваш — ответ на $n по учёту передан, но в Antigravity его не вижу; спрашиваю"
-      $p=New-TgPrompt -Kind 'proto' -Text "⚠️ Ответ Gemini на $n по моему учёту уже передан в Antigravity, но в чате Antigravity я его не вижу. Передать его в Antigravity?" -Buttons "Передать ответ в Antigravity=relay;Не передавать=norelay" -Data @{ name=$n }
+      $turn="ваш — ответ на $n по учёту передан, но в $(Get-IdeName) его не вижу; спрашиваю"
+      $p=New-TgPrompt -Kind 'proto' -Text "⚠️ Ответ Gemini на $n по моему учёту уже передан в $(Get-IdeName), но в чате $(Get-IdeName) я его не вижу. Передать его в $(Get-IdeName)?" -Buttons "Передать ответ в $(Get-IdeName)=relay;Не передавать=norelay" -Data @{ name=$n }
     }
     elseif($st -eq 'nocode'){ $turn="ваш — ответ на $n был без блока Markdown; жду новый файл" }
-    else { $turn="Antigravity — ответ на $n у агента; жду следующий файл" }
+    else { $turn="$(Get-IdeName) — ответ на $n у агента; жду следующий файл" }
   }
-  elseif($st -eq 'answered'){ $turn="GGskript — передам уже полученный ответ на $n в Antigravity (если его там ещё нет)" }
+  elseif($st -eq 'answered'){ $turn="GGskript — передам уже полученный ответ на $n в $(Get-IdeName) (если его там ещё нет)" }
   elseif($st -eq 'stale'){ $turn="ваш — ответ на $n совпал со старым: «передай всё равно» или «отправь заново»" }
   elseif($st -eq 'sent' -or $lp -eq $n){
     if($pk -and -not $pk.answered){ $turn="Gemini — ответа на $n ещё нет; жду" }
     elseif($pk -and -not $pk.md){ $turn="ваш — в ответе на $n нет блока Markdown (блоки: $(Format-Langs $pk.labels)); другие блоки не беру, пришлю вопрос" }
-    elseif($inAg){ $turn="Antigravity — ответ на $n уже вставлен; отмечу как переданный и жду следующий файл" }
-    else { $turn="GGskript — заберу ответ на $n (только блок Markdown) и передам в Antigravity" }
+    elseif($inAg){ $turn="$(Get-IdeName) — ответ на $n уже вставлен; отмечу как переданный и жду следующий файл" }
+    else { $turn="GGskript — заберу ответ на $n (только блок Markdown) и передам в $(Get-IdeName)" }
   }
   else { $turn="GGskript — отправлю $n в Gemini" }
   $rep+="👉 Ход: $turn"
@@ -1195,15 +1273,16 @@ function Ag-Rpc($method){
   $tryOne={ param($c) Invoke-RestMethod "http://127.0.0.1:$($c.port)/exa.language_server_pb.LanguageServerService/$method" -Method Post -Body $body -ContentType 'application/json' -Headers @{'X-Codeium-Csrf-Token'=$c.tok;'Connect-Protocol-Version'='1'} -TimeoutSec 6 }
   if($script:AgSrv){ try{ return (& $tryOne $script:AgSrv) }catch{ $script:AgSrv=$null } }
   foreach($c in Find-AgServers){ try{ $r=& $tryOne $c; $script:AgSrv=$c; return $r }catch{} }
-  throw 'локальный сервер Antigravity не отвечает'
+  throw "локальный сервер $(Get-IdeName) не отвечает"
 }
-function Get-AgQuota{ if($Cfg.AgTarget -eq 'dsharness'){ return (Get-DshQuota) }; ConvertFrom-AgQuota -Response (Ag-Rpc 'RetrieveUserQuotaSummary') -Group $Cfg.AgGroup -Refine { Ag-Rpc 'GetUserStatus' } }
+function Get-AgQuota{ if((Test-IsDsh)){ return (Get-DshQuota) }; ConvertFrom-AgQuota -Response (Ag-Rpc 'RetrieveUserQuotaSummary') -Group $Cfg.AgGroup -Refine { Ag-Rpc 'GetUserStatus' } }
 function Get-GeminiWebUsage{ ConvertFrom-UsageText (Gem-GetUsageText) }
 function Quota-Text{
   if(!$script:Q){ return 'ещё не проверялись' }
   $q=$script:Q; $l=@("проверено в $($q.time)")
   if($q.gweb){ $l+="Gemini (сайт): текущее использовано $($q.gweb.cur)% ($($q.gweb.curReset)); неделя использовано $($q.gweb.wk)% ($($q.gweb.wkReset))" } elseif($q.gwebErr){ $l+="Gemini (сайт): ошибка — $($q.gwebErr)" }
-  if($q.ag){ $l+="Antigravity ($($Cfg.AgGroup)): 5 ч осталось $($q.ag.h5.rem)%$($q.ag.h5.note) (сброс $($q.ag.h5.reset)); неделя осталось $($q.ag.wk.rem)%$($q.ag.wk.note) (сброс $($q.ag.wk.reset))" } elseif($q.agErr){ $l+="Antigravity: ошибка — $($q.agErr)" }
+  if($q.ag -and (Test-IsDsh)){ $l+="$(Get-IdeName): квота не публикуется$(if($q.ag.dsh -and $q.ag.dsh.rate){' (последний шаг — 429 RATE_LIMIT)'})" }
+  elseif($q.ag){ $l+="$(Get-IdeName) ($($Cfg.AgGroup)): 5 ч осталось $($q.ag.h5.rem)%$($q.ag.h5.note) (сброс $($q.ag.h5.reset)); неделя осталось $($q.ag.wk.rem)%$($q.ag.wk.note) (сброс $($q.ag.wk.reset))" } elseif($q.agErr){ $l+="$(Get-IdeName): ошибка — $($q.agErr)" }
   $b=Quota-Blocked; if($b){ $l+="⛔ Остановлено по лимиту: $b" }
   $l -join "`n"
 }
@@ -1231,8 +1310,8 @@ function Get-AutoResumePlan{
   }
   if($QStopA){
     $n0=$resets.Count
-    if($Q -and $Q.ag){ foreach($kk in 'h5','wk'){ $v=$Q.ag[$kk]; if($v -and (Test-QuotaOver (100-[double]$v.rem) $C.AgThreshold $C.AgThresholdIs)){ $resets+=,@("лимит Antigravity ($(if($kk -eq 'h5'){'5 ч'}else{'неделя'}))",$v.resetAt,[string]$v.reset) } } }
-    if($resets.Count -eq $n0){ $ats+=$Now.AddMinutes($retry); $why+="лимит Antigravity — перепроверю через $retry мин" }
+    if($Q -and $Q.ag){ foreach($kk in 'h5','wk'){ $v=$Q.ag[$kk]; if($v -and (Test-QuotaOver (100-[double]$v.rem) $C.AgThreshold $C.AgThresholdIs)){ $resets+=,@("лимит $(Get-IdeName) ($(if($kk -eq 'h5'){'5 ч'}else{'неделя'}))",$v.resetAt,[string]$v.reset) } } }
+    if($resets.Count -eq $n0){ $ats+=$Now.AddMinutes($retry); $why+="лимит $(Get-IdeName) — перепроверю через $retry мин" }
   }
   foreach($r in $resets){
     $at=$r[1]; if($null -eq $at -and $r[2]){ $at=ConvertFrom-ResetText $r[2] $Now }
@@ -1314,10 +1393,84 @@ function Invoke-AutoResume{
   if($script:LimitStop){ Resume-Work "автоматически после сброса лимита" } else { Log "Автовозобновление: лимиты в норме, модель «$m»" }
   $true
 }
-function Quota-Blocked{ $r=@(); if($script:QStopG){ $r+='лимит Gemini (сайт)' }; if($script:QStopA){ $r+='лимит Antigravity' }; $r -join ', ' }
+# ---------- 27.10: раз в минуту на остановке по лимиту — вкладка/аккаунт/Argon ----------
+$script:AcctKey=''; $script:AcctWatchAt=[datetime]::MinValue; $script:AcctMenuAt=[datetime]::MinValue; ''''; $script:AcctErrSaid=''
+function Test-AccountWatchOn{ [bool]($Cfg.AccountWatch -and $Cfg.GeminiTransport -eq 'cdp' -and $Cfg.AutoResume) }
+# Чистое решение. $Base — ключ «вкладка|аккаунт» при остановке ('' — ещё не снят), $Key — текущий, $ArgonSel — выбрана ли Argon,
+# $MenuAvail — Argon доступен в меню ($true/$false; $null — не знаю), $PrevAvail — был ли доступен раньше, $LastAttempt — последняя попытка возобновления.
+# act: baseline (запомнить), resume (продолжить), none (ждать).
+function Get-AccountWatchAction([string]$Base,[string]$Key,[bool]$ArgonSel,$MenuAvail,[bool]$PrevAvail,$LastAttempt,[datetime]$Now=(Get-Date),[double]$RetryMin=5){
+  $avail= $ArgonSel -or ($MenuAvail -eq $true)
+  if(-not $Base){ return @{ act='baseline'; avail=$avail; changed=$false; why='первое наблюдение' } }
+  $changed= ($Base -ne $Key)
+  if($avail -and $changed){ return @{ act='resume'; avail=$true; changed=$true; why='аккаунт сменён, Argon доступен' } }
+  if($avail -and -not $PrevAvail){ return @{ act='resume'; avail=$true; changed=$false; why='Argon снова доступен' } }
+  if($avail -and -not $ArgonSel -and ($null -eq $LastAttempt -or ($Now-[datetime]$LastAttempt).TotalMinutes -ge $RetryMin)){ return @{ act='resume'; avail=$true; changed=$false; why='Argon доступен, повторная попытка' } }
+  @{ act='none'; avail=$avail; changed=$changed; why= $(if($changed){ 'аккаунт сменён, но Argon недоступен' } else { 'без изменений' }) }
+}
+function Get-GemAccountKey{
+  $a=''; try{ $a=[string](Gem-GetAccount) }catch{}
+  "u$(Get-GeminiAccountIndex $script:CdpLastUrl)|$a"
+}
+# $true/$false — есть ли в меню моделей доступный пункт Argon; $null — меню прочитать не удалось. Меню открывается через CDP (без фокуса/мыши) и закрывается.
+function Test-ArgonInMenu{
+  try{
+    $r=Gem-ListModels; $w=$Cfg.ModelMustContain
+    $it=@($r.items | Where-Object { $_.name -and ([string]$_.name).IndexOf($w,[StringComparison]::OrdinalIgnoreCase) -ge 0 }) | Select-Object -First 1
+    if(-not $it){ return $false }
+    [bool]($it.enabled -or $it.selected)
+  }catch{ $null }
+}
+function Set-AcctSummary([string]$Text){ if($Text -ne $script:AcctSum){ $script:AcctSum=$Text; Log $Text } }
+# Одна проверка. $true — возобновил работу.
+function Invoke-AccountWatch{
+  $r=$null
+  try{ $r=Select-GeminiTabNow }catch{ $e=$_.Exception.Message; if($script:AcctErrSaid -ne $e){ $script:AcctErrSaid=$e; Log "Аккаунт: вкладку Gemini выбрать не удалось ($e)" }; return $false }
+  $script:AcctErrSaid=''
+  $key=Get-GemAccountKey
+  $m=''; try{ $m=[string](Get-ModelNow) }catch{}
+  $argon=Is-Argon $m
+  $changed= [bool]($script:AcctKey -and $key -ne $script:AcctKey)
+  $probe= (-not $argon) -and ($changed -or ((Get-Date)-$script:AcctMenuAt).TotalMinutes -ge [double]$Cfg.AccountMenuProbeMin)
+  if($probe){ $script:AcctMenuAt=Get-Date; $mv=Test-ArgonInMenu; if($null -ne $mv){ $script:AcctMenuAvail=[bool]$mv } }
+  $d=Get-AccountWatchAction $script:AcctKey $key $argon $(if($argon){ $null } else { $script:AcctMenuAvail }) $script:AcctPrevAvail $script:AutoLastAttempt (Get-Date) ([double]$Cfg.AccountRetryMin)
+  $script:AcctPrevAvail=[bool]$d.avail
+  Set-AcctSummary "Аккаунт: $key; модель «$m»; Argon: $(if($argon){'выбран'}elseif($script:AcctMenuAvail){'доступен в меню'}else{'недоступен'})"
+  if($d.act -eq 'baseline'){ $script:AcctKey=$key; return $false }
+  if($d.act -eq 'resume'){
+    $script:AcctKey=$key
+    Log "✅ $(if($d.changed){'Аккаунт сменён, Argon доступен — продолжаю'}else{'Argon доступен — продолжаю'})"
+    $script:AutoPlan=$null
+    return [bool](Invoke-AutoResume)
+  }
+  $script:AcctKey=$key
+  $false
+}
+# Кнопка панели «Сменил аккаунт»: сбросить CDP, заново выбрать вкладку, перечитать лимит и модель; лимит в норме — вернуть Argon и продолжить.
+function Invoke-AccountSwitched{
+  Log '🔄 «Сменил аккаунт»: сбрасываю соединение с Gemini, заново выбираю вкладку, перечитываю лимит и модель'
+  $script:AcctKey=''; $script:AcctSum=''; $script:AutoFails=0; $script:AutoLastAttempt=$null; $script:AutoPlan=$null; $script:AutoPlanKey=''
+  $r=$null
+  try{ $r=Select-GeminiTabNow -Force }catch{ Log "❌ «Сменил аккаунт»: вкладку Gemini выбрать не удалось ($($_.Exception.Message))"; return $false }
+  $key=Get-GemAccountKey; $script:AcctKey=$key
+  Log "Вкладка чата: $($r.url); $key"
+  try{ [void](Check-Quotas) }catch{ Log "Лимиты: $($_.Exception.Message)" }
+  $script:LastQuota=Get-Date
+  $m=''; try{ $m=[string](Get-ModelNow) }catch{ Log "Модель Gemini не прочитана: $($_.Exception.Message)" }
+  $qb=Quota-Blocked
+  if($qb){ Log "⛔ «Сменил аккаунт»: лимит ещё не в норме ($qb), модель «$m» — остаюсь на остановке, проверка каждую минуту продолжается"; return $false }
+  if(-not (Is-Argon $m)){
+    if(-not $Cfg.AutoSwitchModel){ Log "⚠ «Сменил аккаунт»: лимит в норме, но выбрана «$m», а автопереключение модели выключено — выберите $($Cfg.ModelMustContain) вручную"; return $false }
+    try{ $m=Switch-ToArgon }catch{ Log "⚠ «Сменил аккаунт»: лимит в норме, но Argon недоступен: $($_.Exception.Message)"; return $false }
+  }
+  $script:AutoFails=0; $script:AutoPlan=$null; $script:AutoPlanKey=''
+  if($script:LimitStop){ Resume-Work 'после смены аккаунта (кнопка панели)' } else { Log "✅ «Сменил аккаунт»: лимит в норме, модель «$m» — продолжаю работу" }
+  $true
+}
+function Quota-Blocked{ $r=@(); if($script:QStopG){ $r+='лимит Gemini (сайт)' }; if($script:QStopA){ $r+="лимит $(Get-IdeName)" }; $r -join ', ' }
 function Check-Quotas{
   $q=@{ time=(Get-Date).ToString('HH:mm') }
-  if($Cfg.AgCheck){ try{ $q.ag=Get-AgQuota }catch{ $q.agErr=$_.Exception.Message; Log "Лимиты Antigravity: $($q.agErr)" } }
+  if($Cfg.AgCheck){ try{ $q.ag=Get-AgQuota }catch{ $q.agErr=$_.Exception.Message; Log "Лимиты $(Get-IdeName): $($q.agErr)" } }
   if($Cfg.GeminiWebCheck){
     try{ $q.gweb=Get-GeminiWebUsage; $script:UsageNoTabSaid=$false }
     catch{
@@ -1333,7 +1486,7 @@ function Check-Quotas{
   $m=@()
   if($q.gweb){ $m+=@{k='gcur';side='g';used=$q.gweb.cur;txt="Gemini (сайт), текущее: использовано $($q.gweb.cur)% ($($q.gweb.curReset))"}
                $m+=@{k='gwk';side='g';used=$q.gweb.wk;txt="Gemini (сайт), неделя: использовано $($q.gweb.wk)% ($($q.gweb.wkReset))"} }
-  if($q.ag){ foreach($kk in 'h5','wk'){ $v=$q.ag[$kk]; if($v){ $m+=@{k="ag$kk";side='a';used=(100-$v.rem);txt="Antigravity, $(if($kk -eq 'h5'){'5 часов'}else{'неделя'}): осталось $($v.rem)% (сброс $($v.reset))"} } } }
+  if($q.ag -and -not (Test-IsDsh)){ foreach($kk in 'h5','wk'){ $v=$q.ag[$kk]; if($v){ $m+=@{k="ag$kk";side='a';used=(100-$v.rem);txt="$(Get-IdeName), $(if($kk -eq 'h5'){'5 часов'}else{'неделя'}): осталось $($v.rem)% (сброс $($v.reset))"} } } }
   $warn=@(); $stopG=$false; $stopA=$false; $step=$Cfg.QuotaReWarnStep
   foreach($x in $m){
     if($x.side -eq 'g'){ $pct=$Cfg.GeminiWebThreshold; $mode=$Cfg.GeminiWebThresholdIs } else { $pct=$Cfg.AgThreshold; $mode=$Cfg.AgThresholdIs }
@@ -1434,6 +1587,7 @@ function Get-AgBlockText($b){
   switch($b.kind){
     'hung'     { "⏸ $(Get-IdeName) не отвечает (зависло) — жду, $f.`nПризнаки: $($b.detail)" }
     'nowindow' { "⏸ Окно $(Get-IdeName) не найдено (закрыто или перезапускается) — жду, $f." }
+    'busy'     { "⏳ $(Get-IdeName) ещё работает — жду, $f." }
     'foreign'  { "✋ В поле чата $(Get-IdeName) чужой текст: '$($b.detail)' — не трогаю. Отправь или очисти его; $f." }
     default    { "⚠️ Не удалось вставить ответ в $(Get-IdeName), причина не ясна: $($b.msg)`nДиагностика: $($b.detail)`n$f; повторяю раз в $($Cfg.AgBlockRetrySec) сек." }
   }
@@ -1454,8 +1608,8 @@ function Report-AgBlock($Ex,[string]$File){
   $b=$script:AgBlock
   if($Cfg.AgAutoRestartMin -gt 0 -and $b.kind -eq 'hung' -and ($now-$b.since).TotalMinutes -ge $Cfg.AgAutoRestartMin -and (-not $b.restartedAt -or ($now-$b.restartedAt).TotalMinutes -ge $Cfg.AgAutoRestartMin)){
     $b.restartedAt=$now
-    try{ $w=Ag-GetWindowInfo; if(-not $w -or -not $w.pid){ throw 'нет pid окна Antigravity' }; $exe=Restart-Antigravity $w.pid; $t="🔄 Antigravity не отвечал $($Cfg.AgAutoRestartMin)+ мин — перезапустил ($exe). Ответ передам, когда окно поднимется."; Log $t; Tg-Send $t | Out-Null }
-    catch{ $t="❌ Автоперезапуск Antigravity не удался: $($_.Exception.Message)"; Log $t; Tg-Send $t | Out-Null }
+    try{ $w=Ag-GetWindowInfo; if(-not $w -or -not $w.pid){ throw "нет pid окна $(Get-IdeName)" }; $exe=Restart-Antigravity $w.pid; $t="🔄 $(Get-IdeName) не отвечал $($Cfg.AgAutoRestartMin)+ мин — перезапустил ($exe). Ответ передам, когда окно поднимется."; Log $t; Tg-Send $t | Out-Null }
+    catch{ $t="❌ Автоперезапуск $(Get-IdeName) не удался: $($_.Exception.Message)"; Log $t; Tg-Send $t | Out-Null }
   }
 }
 
@@ -1498,7 +1652,7 @@ function Invoke-MirrorGemini([switch]$Force){
   if(-not $argNow){
     $ok=Test-BlockFromArgon -Code $ans -ArgonNow $false -Gate (Get-BlockGate $ans)
     if(-not $ok.ok){ $script:MirrorSeen=$null; return $false }
-    Log "🔭 Наблюдатель: модель сейчас «$m2» (лимит), но блок уже дописан — $($ok.why); передаю в Antigravity"
+    Log "🔭 Наблюдатель: модель сейчас «$m2» (лимит), но блок уже дописан — $($ok.why); передаю в $(Get-IdeName)"
   }
   $hh=Get-Hash8 $ans
   if(Test-RelayHash $script:St $hh){ $script:MirrorSeen=$null; return $false }
@@ -1506,8 +1660,8 @@ function Invoke-MirrorGemini([switch]$Force){
   $ref=Get-AnswerRefNow; if($ref -and (Test-Path -LiteralPath (Join-Path $Cfg.Downloads $ref))){ $n=$ref }   # пункт 44: привязка по «Ответ на:»
   if(Ag-HasText $ans){
     Register-BlockRelayed $ans $hh
-    Add-RelayHash $script:St $hh $Cfg.HashKeep; if($n){ [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: уже был в Antigravity' -Force) }; Save-State
-    Log "🔭 Наблюдатель: блок Markdown (хэш $hh) уже есть в Antigravity — отметил как переданный"; $script:MirrorSeen=$null; return $false
+    Add-RelayHash $script:St $hh $Cfg.HashKeep; if($n){ [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note "наблюдатель: уже был в $(Get-IdeName)" -Force) }; Save-State
+    Log "🔭 Наблюдатель: блок Markdown (хэш $hh) уже есть в $(Get-IdeName) — отметил как переданный"; $script:MirrorSeen=$null; return $false
   }
   $g=Get-BlockGate $ans; if($g.tagged -and -not $g.ok){ Notify-BlockGate $g $hh $n; $script:MirrorSeen=$null; return $false }   # пункт 44
   [void](Assert-AgReady)
@@ -1516,7 +1670,7 @@ function Invoke-MirrorGemini([switch]$Force){
   Add-RelayHash $script:St $hh $Cfg.HashKeep; $script:TurnSide='antigravity'
   if($n){ $script:Held.Remove($n); [void](Set-FileStage -State $script:St -Name $n -Stage 'relayed' -Hash $hh -Note 'наблюдатель: ответ Gemini передан' -Force); Mark-Done $n }
   Save-State; $script:MirrorSeen=$null; [void](Play-Sound 'info')
-  $msg="🔭 Наблюдатель: в Gemini новый блок Markdown (модель $m2, $($ans.Length) симв., хэш $hh, «$(Get-FirstLine $ans)»)$(if($n){" — ответ на $n"}) — передал в Antigravity"
+  $msg="🔭 Наблюдатель: в Gemini новый блок Markdown (модель $m2, $($ans.Length) симв., хэш $hh, «$(Get-FirstLine $ans)»)$(if($n){" — ответ на $n"}) — передал в $(Get-IdeName)"
   Log $msg; Tg-Send $msg | Out-Null; $true
 }
 function Invoke-MainStep{
@@ -1550,12 +1704,19 @@ function Invoke-MainStep{
       if(-not $script:AutoPlan){ Update-AutoPlan }
       if($script:AutoPlan -and (Get-Date) -ge $script:AutoPlan.at){ $script:Busy=$true; try{ [void](Invoke-AutoResume) } finally { $script:Busy=$false }; return 'continue' }
     } elseif(-not ($script:LimitStop -or $qb)){ $script:AutoPlan=$null }
+    # 27.10: пока стою на лимите Gemini/Argon — раз в AccountWatchSec сек проверяю вкладку, аккаунт и Argon (вместо ожидания 10–20 мин)
+    if(($script:LimitStop -or $script:QStopG) -and -not $script:Paused -and (Test-AccountWatchOn)){
+      if(((Get-Date)-$script:AcctWatchAt).TotalSeconds -ge [double]$Cfg.AccountWatchSec){
+        $script:AcctWatchAt=Get-Date; $script:Busy=$true
+        try{ if(Invoke-AccountWatch){ return 'continue' } }catch{ if((Get-ErrorKind $_) -eq 'stop'){ throw }; Set-AcctSummary "Аккаунт: проверка не удалась ($($_.Exception.Message))" } finally { $script:Busy=$false }
+      }
+    } elseif(-not ($script:LimitStop -or $script:QStopG)){ $script:AcctKey=''; $script:AcctSum=''; $script:AcctPrevAvail=$false; $script:AcctMenuAvail=$false }
     $wait= if($script:AutoPlan -and $Cfg.AutoResume){ " — жду сброса, проверю в $(Format-PlanTime $script:AutoPlan.at)" } else { '' }
     if($script:LimitStop){
-      $script:State="⛔ остановлено: в Gemini модель «$($script:LimitModel)» вместо $($Cfg.ModelMustContain)$wait"
+      $script:State="⛔ лимит Argon закончен, модель переключена на «$($script:LimitModel)»$wait"
       if(((Get-Date)-$script:LastLimitCheck).TotalSeconds -ge $Cfg.ModelRecheckSec){
         $script:LastLimitCheck=Get-Date
-        try{ $m=Get-ModelNow; if(Is-Argon $m){ Resume-Work "автоматически: снова выбрана $m" } else { $script:LimitModel=$m; Log "Лимит: модель всё ещё «$m»" } }catch{ Log "Лимит: не удалось проверить модель ($($_.Exception.Message))" }
+        try{ $m=Get-ModelNow; if(Is-Argon $m){ Resume-Work "автоматически: снова выбрана $m" } else { $script:LimitModel=$m; if($script:LastLimitModelLog -ne $m){ $script:LastLimitModelLog=$m; Log "Лимит: модель всё ещё «$m»" } } }catch{ Log "Лимит: не удалось проверить модель ($($_.Exception.Message))" }
       }
     }
     elseif($qb){ $script:State="⛔ остановлено по лимиту: $qb$(if($wait){$wait}else{" (проверка раз в $($Cfg.QuotaEveryMin) мин)"})" }
@@ -1594,17 +1755,17 @@ function Invoke-MainStep{
       if(-not $ex){ $ex=$_.Exception }
       $nf=$null; try{ $nf=Next-FileName }catch{}
       Report-AgBlock $ex $nf
-      $script:State="⏸ жду Antigravity ($($script:AgBlock.kind)): $($ex.Message)"
+      $script:State="⏸ жду $(Get-IdeName) ($($script:AgBlock.kind)): $(Format-ShortState ([string]$ex.Message) 140)"
       try{ Nap $(if($script:AgBlock.kind -eq 'foreign'){ $Cfg.AgForeignRetrySec } else { $Cfg.AgBlockRetrySec }) }catch{ if((Get-ErrorKind $_) -eq 'stop'){ Log 'Остановлено.'; return 'stop' } }
       return 'ok'
     }
     $msg="❌ ОШИБКА: $($_.Exception.Message). Повтор через $($Cfg.RetrySec) сек."; Log $msg -NoAction; Notify $msg
-    $script:State="повтор после ошибки: $($_.Exception.Message)"
+    $script:State="повтор после ошибки: $(Format-ShortState ([string]$_.Exception.Message) 160)"   # 27.10: без сырого текста страницы (подробности — в журнале)
     try{ for($i=$Cfg.RetrySec;$i -gt 0;$i-=10){ Write-Host "  ...повтор через $i сек"; Nap ([Math]::Min(10,$i)) } }catch{ if((Get-ErrorKind $_) -eq 'stop'){ Log 'Остановлено.'; return 'stop' } }
   }
   try{
     $agDown= $script:AgBlock -and $script:AgBlock.kind -in @('hung','nowindow')   # к зависшему окну UIA не обращаемся
-    if(-not $agDown -and -not $script:Paused -and $Cfg.AgQueueCheckSec -gt 0 -and ((Get-Date)-$script:LastQueueCheck).TotalSeconds -ge $Cfg.AgQueueCheckSec){ $script:LastQueueCheck=Get-Date; try{ Check-AgQueue }catch{ Log "Очередь Antigravity: $($_.Exception.Message)" }; if($Cfg.AgTransport -eq 'mailbox'){ try{ [void](Check-MailboxAcks) }catch{} } }
+    if(-not $agDown -and -not $script:Paused -and $Cfg.AgQueueCheckSec -gt 0 -and ((Get-Date)-$script:LastQueueCheck).TotalSeconds -ge $Cfg.AgQueueCheckSec){ $script:LastQueueCheck=Get-Date; try{ Check-AgQueue }catch{ Log "Очередь $(Get-IdeName): $($_.Exception.Message)" }; if($Cfg.AgTransport -eq 'mailbox'){ try{ [void](Check-MailboxAcks) }catch{} } }
     if(-not $agDown -and -not $script:Paused -and $Cfg.AcceptAllEverySec -gt 0 -and ((Get-Date)-$script:LastAccept).TotalSeconds -ge $Cfg.AcceptAllEverySec){ $script:LastAccept=Get-Date; if($Cfg.AutoAcceptAll){ try{ Try-AcceptAll -Report | Out-Null }catch{ Log "Accept all: $($_.Exception.Message)" } } }
     Nap $Cfg.PollSec
   }catch{ if((Get-ErrorKind $_) -eq 'stop'){ Log 'Остановлено.'; return 'stop' }; Log "Ошибка в цикле: $($_.Exception.Message)" }

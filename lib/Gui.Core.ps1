@@ -48,7 +48,7 @@ function Send-GuiCmd([string]$Path,[string]$Text){
 function Format-GuiLimits($j){
   $g= if($null -ne $j.gwebCur){ "Gemini сайт: исп. $($j.gwebCur)% (сброс $($j.gwebCurReset)); неделя $($j.gwebWk)% ($($j.gwebWkReset))" } else { 'Gemini сайт: —' }
   $an= if($j.ideName){ [string]$j.ideName } else { 'Antigravity' }
-  if($j.ide -eq 'dsharness'){ $a="${an}: квота не публикуется" }
+  if($j.ide -in @('dsharness','cursor')){ $a="${an}: квота не публикуется" }
   elseif($null -ne $j.agH5){ $a="${an}: 5ч ост. $($j.agH5)% (сброс $($j.agH5Reset)); неделя ост. $($j.agWk)% ($($j.agWkReset))" } else { $a="${an}: —" }
   if($j.quotaTime){ "Лимиты ($($j.quotaTime)) — $g | $a" } else { "Лимиты: $g | $a" }
 }
@@ -56,7 +56,7 @@ function Get-GuiStateView($j){
   $tag= switch([string]$j.kind){ 'running'{'работает'} 'paused'{'⏸ Остановлен — ничего не делаю'} 'limit'{'ОСТАНОВЛЕНО (лимит/модель)'} 'operator'{'✋ ждёт решения оператора'} 'stopped'{'остановлен'} default{[string]$j.kind} }
   $color= switch([string]$j.kind){ 'running'{'ForestGreen'} 'paused'{'DarkOrange'} 'limit'{'Firebrick'} 'operator'{'Firebrick'} 'stopped'{'DimGray'} default{'Black'} }
   $pend= if($j.pending -and @($j.pending).Count){ (@($j.pending) -join '; ') } else { 'нет' }
-  @{ State="Состояние: $tag — $($j.state)"; Color=$color
+  @{ State="Состояние: $tag$(if([string]$j.state){ " — $(Format-ShortState ([string]$j.state))" })"; Color=$color
      Model="Модель Gemini: $(if($j.model){$j.model}else{'—'})$(if($j.limitStop){ ' | лимит: '+$j.limitModel })$(if($j.resumeAt){ ' | жду сброса в '+$j.resumeAt })"
      File="Проект: $(if($j.project){$j.project}else{'—'}) | Следующий файл: $(if($j.nextFile){$j.nextFile}else{'нет'}) | в работе: $pend | передан: $(if($j.lastDone){$j.lastDone}else{'—'})"
      Limits=(Format-GuiLimits $j); Action="посл. действие: $($j.lastAction)$(if($j.transport){' | '+$j.transport})" }
@@ -122,9 +122,9 @@ function Get-TurnView([string]$Turn,[bool]$WorkerAlive=$true,[string]$Ide='Antig
 }
 # пункт 51: IDE-сторона для панели
 # пункт 52: все надписи панели, зависящие от IDE (Antigravity / DeepSeek Harness)
-function Get-IdeTexts([string]$Target='antigravity',[int]$AgPort=9333,[int]$DshPort=9334){
-  $d= $Target -eq 'dsharness'
-  $N= if($d){'DeepSeek Harness'}else{'Antigravity'}; $S= if($d){'Harness'}else{'Antigravity'}; $P= if($d){$DshPort}else{$AgPort}
+function Get-IdeTexts([string]$Target='antigravity',[int]$AgPort=9333,[int]$DshPort=9334,[int]$CurPort=9335){
+  $cu= $Target -eq 'cursor'; $d= $Target -eq 'dsharness'
+  $N= if($cu){'Cursor'}elseif($d){'DeepSeek Harness'}else{'Antigravity'}; $S= if($cu){'Cursor'}elseif($d){'Harness'}else{'Antigravity'}; $P= if($cu){$CurPort}elseif($d){$DshPort}else{$AgPort}
   [ordered]@{
     Name=$N; Short=$S; Port=$P
     Fwd="📂 Ответ в $S"; FwdTip="Весь последний ответ Gemini в $N (спрошу подтверждение)"
@@ -133,19 +133,19 @@ function Get-IdeTexts([string]$Target='antigravity',[int]$AgPort=9333,[int]$DshP
     AgTHint="Текст для агента $N. Ответом будет его новый отчёт в Downloads — покажу в журнале. Ctrl+Enter — отправить."
     LimTip="Проверить лимиты Gemini и $N"
     Auto="Автоподтверждение запросов $S"
-    AutoTip= if($d){'Сам отвечает «Разрешить один раз» на запросы разрешения агента Harness (через порт). Никогда — «всегда», «Запретить», «Отклонить».'}else{'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.'}
+    AutoTip= if($cu){'Сам нажимает «Run» / «Allow» на запросы агента Cursor (через порт). Никогда — Skip, «always», Allowlist, Reject.'}elseif($d){'Сам отвечает «Разрешить один раз» на запросы разрешения агента Harness (через порт). Никогда — «всегда», «Запретить», «Отклонить».'}else{'Сам отвечает «Yes, allow this time» и нажимает Submit на запросы разрешения агента. Никогда не выбирает «always», «No», Skip.'}
     Acc= if($d){'Автопринятие «Принять все»'}else{'Автопринятие Accept all'}
     AccTip="Когда агент $N закончил работу, сам нажимает «$(if($d){'Принять все'}else{'Accept all'})» (через порт, без мыши). Отклонить — никогда."
     Cdp="🛠 $S с портом"
-    CdpTip= if($d){"Перезапустить DeepSeek Harness с портом $P (спрошу подтверждение): закрою все его процессы, включая трей, и запущу с портом."}else{"Перезапустить Antigravity с портом $P (спрошу подтверждение). С портом — без мыши и автоподтверждение надёжнее."}
-    CdpConfirm= if($d){"Перезапустить DeepSeek Harness с портом отладки ${P}?`n`nВсе процессы Harness (и значок в трее) будут закрыты, затем он откроется с портом.`nТекущий ответ агента, если он идёт, прервётся."}else{"Перезапустить Antigravity с портом отладки ${P}?`n`nAntigravity закроется (как File → Exit) и сразу откроется снова. Несохранённые файлы он предложит сохранить.`nПосле перезапуска откройте прошлый разговор: значок часов → последний → Open in current window.`n`nСовет: сначала нажмите «⏸ Стоп», после перезапуска — «▶️ Старт»."}
+    CdpTip= if($cu){"Перезапустить Cursor с портом $P (спрошу подтверждение): закрою все окна Cursor и запущу его с портом."}elseif($d){"Перезапустить DeepSeek Harness с портом $P (спрошу подтверждение): закрою все его процессы, включая трей, и запущу с портом."}else{"Перезапустить Antigravity с портом $P (спрошу подтверждение). С портом — без мыши и автоподтверждение надёжнее."}
+    CdpConfirm= if($cu){"Перезапустить Cursor с портом отладки ${P}?`n`nВСЕ окна Cursor закроются (идущие агенты Cursor прервутся), затем он откроется с портом.`nПосле перезапуска откройте окно Agents и нужный чат."}elseif($d){"Перезапустить DeepSeek Harness с портом отладки ${P}?`n`nВсе процессы Harness (и значок в трее) будут закрыты, затем он откроется с портом.`nТекущий ответ агента, если он идёт, прервётся."}else{"Перезапустить Antigravity с портом отладки ${P}?`n`nAntigravity закроется (как File → Exit) и сразу откроется снова. Несохранённые файлы он предложит сохранить.`nПосле перезапуска откройте прошлый разговор: значок часов → последний → Open in current window.`n`nСовет: сначала нажмите «⏸ Стоп», после перезапуска — «▶️ Старт»."}
     MenuHead=$S.ToUpper(); Accept= if($d){'✅ Принять «Принять все»'}else{'✅ Принять «Accept all»'}
-    TileTip="IDE: $N. Нажмите, чтобы выбрать Antigravity или DeepSeek Harness (только при «⏸ Стоп»)."
+    TileTip="IDE: $N. Нажмите, чтобы выбрать Antigravity, DeepSeek Harness или Cursor (только при «⏸ Стоп»)."
   }
 }
 # Кнопка с эмодзи-картинкой (New-Btn): текст без эмодзи
 function Get-BtnPlainText([string]$Text){ if($Text -match '^(\S+)\s+(.+)$' -and $matches[1] -cnotmatch '[A-Za-zА-Яа-яЁё]'){ $matches[2] } else { $Text } }
-function Get-IdeChoices{ @([ordered]@{ v='antigravity'; t='Antigravity' }, [ordered]@{ v='dsharness'; t='DeepSeek Harness' }) }
+function Get-IdeChoices{ @([ordered]@{ v='antigravity'; t='Antigravity' }, [ordered]@{ v='dsharness'; t='DeepSeek Harness' }, [ordered]@{ v='cursor'; t='Cursor' }) }
 function Get-DshExe{ Find-FirstPath @("$env:LOCALAPPDATA\Programs\DeepSeek Harness\DeepSeek Harness.exe") }
 function Get-DshDebugArgs([int]$Port){ @("--remote-debugging-port=$Port","--remote-allow-origins=http://127.0.0.1:$Port") }
 # Перезапуск DeepSeek Harness с портом: Harness сворачивается в трей и держит фоновые процессы — после CloseMainWindow
@@ -164,4 +164,69 @@ function Restart-DshCdp([int]$Port=9334,[int]$WaitSec=10,
   & $Starter $exe (Get-DshDebugArgs $Port)
   "🛠 Перезапустил DeepSeek Harness с портом $Port. Откройте нужную сессию в списке слева."
 }
+# пункт 55: Cursor с портом. Cursor — один экземпляр: пока жив хоть один процесс, новый запуск порт не откроет.
+function Get-CursorExe{ Find-FirstPath @("$env:LOCALAPPDATA\Programs\cursor\Cursor.exe","$env:ProgramFiles\Cursor\Cursor.exe") }
+function Restart-CursorCdp([int]$Port=9335,[int]$WaitSec=15,
+  [scriptblock]$GetProcs={ @(Get-Process -Name 'Cursor' -EA 0) },
+  [scriptblock]$Killer={ param($p) Stop-Process -Id $p.Id -Force -EA 0 },
+  [scriptblock]$Starter={ param($exe,$a) Start-Process -FilePath $exe -ArgumentList $a }){
+  if(Test-PortUp $Port){ return "🛠 Cursor уже с портом $Port — перезапуск не нужен." }
+  $exe=Get-CursorExe; if(-not $exe){ return '❌ Cursor не найден.' }
+  foreach($p in @(& $GetProcs)){ try{ if($p.MainWindowHandle -ne [IntPtr]::Zero){ [void]$p.CloseMainWindow() } }catch{} }
+  $t0=Get-Date; while(@(& $GetProcs).Count -and ((Get-Date)-$t0).TotalSeconds -lt $WaitSec){ Start-Sleep -Milliseconds 500 }
+  foreach($p in @(& $GetProcs)){ & $Killer $p }
+  Start-Sleep -Milliseconds 800
+  if(@(& $GetProcs).Count){ return '❌ Cursor не закрылся полностью. Закройте его и нажмите кнопку ещё раз.' }
+  & $Starter $exe (Get-DshDebugArgs $Port)
+  "🛠 Перезапустил Cursor с портом $Port. Откройте окно Agents и нужный чат (или New Chat)."
+}
 function Get-TurnTileSub([string]$St){ switch($St){ 'active'{'в работе'} 'wait'{'ожидание'} 'limit'{'лимит'} default{'—'} } }
+# пункт 57: процессы воркера (GGskript.ps1, не панель) — для «⛔ Выключить скрипт»
+function Get-WorkerPids([scriptblock]$GetProcs={ @(Get-CimInstance Win32_Process -Filter "name='powershell.exe' or name='pwsh.exe'" -EA 0) }){
+  @(& $GetProcs | Where-Object { [string]$_.CommandLine -match 'GGskript\.ps1' -and [string]$_.CommandLine -notmatch 'GGskript_gui\.ps1' -and [int]$_.ProcessId -ne $PID } | ForEach-Object { [int]$_.ProcessId })
+}
+# ===== 27.10: цвета журнала панели =====
+# Уровень строки журнала: error (красный) / warn (жёлтый) / ok (зелёный) / info (голубой) / dim (серый, служебное).
+# Строка без времени «HH:mm:ss» в начале — продолжение предыдущей записи: уровень наследует (кроме явных значков ❌ ⛔ ✅ ⚠ ⏳). Возврат '' = «наследовать».
+function Get-LogLevel([string]$Line){
+  $s=[string]$Line; if(-not $s.Trim()){ return '' }
+  if($s -match '^\s*▸'){ return 'info' }   # собственные строки панели (Add-InfoLog) — всегда голубые
+  $stamped = $s -match '^\s*(\d{1,2}:\d{2}:\d{2}|▸)'
+  $t=($s -replace '^\s*(\d{1,2}:\d{2}:\d{2}|▸)\s*','').Trim()
+  if($stamped){
+    if($t -match '^(>\s|Команда с ПК|Лимит: модель всё ещё|Лимиты: проверено|Аккаунт: u\d)'){ return 'dim' }
+    if($t -match '❌|⛔|не удалось|не удался|ОШИБКА|Exception'){ return 'error' }
+    if($t -match '⚠|⏳|⏭|⚖|⏰'){ return 'warn' }
+    if($t -match '✅|▶️|отправлено|передан\b|передана|нажат|возобновлена'){ return 'ok' }
+    if($t -match '(?i)\bжду\b|ожида|повтор|retry|лимит|остановк|пропуска'){ return 'warn' }
+    return 'info'
+  }
+  if($t -match '❌|⛔'){ return 'error' }
+  if($t -match '⚠|⏳'){ return 'warn' }
+  if($t -match '✅'){ return 'ok' }
+  ''
+}
+# Уровни для набора строк; $Prev — уровень строки перед ними (для продолжений). Первая строка без уровня — info.
+function Get-LogLevels([string[]]$Lines,[string]$Prev='info'){
+  $r=New-Object System.Collections.Generic.List[string]; $p= if($Prev){ $Prev } else { 'info' }
+  foreach($l in @($Lines)){ $v=Get-LogLevel $l; if(-not $v){ $v=$p }; $r.Add($v); $p=$v }
+  ,@($r.ToArray())
+}
+# Цвет уровня (R,G,B) для тёмного фона журнала (24,24,28); запас контраста ≥ 4.5:1
+function Get-LogColor([string]$Level){
+  switch($Level){
+    'error' { [int[]](255,107,107) }
+    'warn'  { [int[]](240,200,80) }
+    'ok'    { [int[]](90,220,130) }
+    'info'  { [int[]](110,185,240) }
+    'dim'   { [int[]](145,145,158) }
+    default { [int[]](220,220,220) }
+  }
+}
+# Сколько символов с головы журнала убрать, чтобы осталось ≈ $Keep (по границе строки); 0 — не нужно
+function Get-LogTrimCount([string]$Text,[int]$Max=250000,[int]$Keep=150000){
+  if($Text.Length -le $Max){ return 0 }
+  $cut=$Text.Length-$Keep; $nl=$Text.IndexOf("`n",$cut); if($nl -lt 0){ return $cut }; $nl+1
+}
+# 04.11: кнопка «❓ Помощь» — файл справки: docs\HELP.txt, иначе README.md (от папки скрипта); нет — $null.
+function Get-HelpDocPath([string]$Root){ foreach($r in 'docs\HELP.txt','README.md'){ $p=Join-Path $Root $r; if(Test-Path -LiteralPath $p -PathType Leaf){ return $p } }; $null }

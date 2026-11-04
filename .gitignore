@@ -7,11 +7,15 @@ relay_*.json
 !relay_settings.example.json
 relay_*.json.bak
 *.bak
+*.bak_*
 *.tmp
+*.TMP
+*~RF*.TMP
 
 # Рабочее состояние и журналы
 relay_*.txt
 relay_log.txt*
+logs/
 PAUSE
 STOP
 commands.txt
@@ -19,16 +23,21 @@ commands.txt.proc
 answers/
 inbox/
 
+# Бэкапы и личные настройки редакторов/агентов
+_backup*/
+backup/
+_archive_*/
+.cursor/
+.vscode/
+
 # Тесты и инструменты
 test-results/
 tools/Pester/
-_archive_*/
 
-# Локальные отчёты (личные пути и данные)
+# Рабочий отчёт (большой, личный)
 REPORT.md
 
-# Windows / редакторы
+# Windows
 Thumbs.db
 desktop.ini
 *.lnk
-.vscode/

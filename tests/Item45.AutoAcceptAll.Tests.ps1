@@ -29,9 +29,32 @@ Describe 'Пункт 45: Try-AcceptAll через CDP (span, не Button)' -Tag 
     Should -Invoke Log -ParameterFilter { $m -eq '✅ Accept all нажат (6 files) (CDP, без фокуса)' }
     Should -Invoke Uia-ClickEl -Times 0
   }
-  It 'агент ещё работает — не жмёт' {
-    Mock AgCdp-AcceptAll { @{found=$true;ok=$false;busy=$true;files=6} }
-    Try-AcceptAll | Should -BeFalse; Should -Invoke AgCdp-AcceptAll -Times 0 -ParameterFilter { -not $Dry }
+  It 'агент ещё работает, AcceptAllWhileBusy=$false — не жмёт (прежний режим)' {
+    $Cfg.AcceptAllWhileBusy=$false
+    try{ Mock AgCdp-AcceptAll { @{found=$true;ok=$false;busy=$true;files=6} }
+      Try-AcceptAll | Should -BeFalse; Should -Invoke AgCdp-AcceptAll -Times 0 -ParameterFilter { -not $Dry } } finally { $Cfg.AcceptAllWhileBusy=$true }
+  }
+  It '25.10: агент работает, AcceptAllWhileBusy — жмёт сразу (EvenBusy), без строки «нажму, когда закончит»' {
+    $Cfg.AcceptAllWhileBusy=$true
+    Mock AgCdp-AcceptAll { if($Dry){ @{found=$true;ok=$false;busy=$true;files=2} } else { @{found=$true;ok=[bool]$EvenBusy;busy=$true;files=2} } }
+    Try-AcceptAll | Should -BeTrue
+    Should -Invoke AgCdp-AcceptAll -Times 1 -ParameterFilter { -not $Dry -and $EvenBusy }
+    Should -Invoke Log -ParameterFilter { $m -like '✅ Accept all нажат (2 files)*агент ещё работает*' }
+    Should -Invoke Log -Times 0 -ParameterFilter { $m -like '*нажму, когда закончит*' }
+  }
+  It '25.10: антидребезг — второе нажатие раньше AcceptAllMinGapSec не делается' {
+    $Cfg.AcceptAllMinGapSec=20; $script:LastAcceptOk=[datetime]::MinValue
+    try{ Mock AgCdp-AcceptAll { if($Dry){ @{found=$true;ok=$false;busy=$true;files=1} } else { @{found=$true;ok=$true;busy=$true;files=1} } }
+      Try-AcceptAll | Should -BeTrue; Try-AcceptAll | Should -BeFalse
+      Should -Invoke AgCdp-AcceptAll -Times 1 -Exactly -ParameterFilter { -not $Dry }
+      Should -Invoke Log -Times 1 -Exactly -ParameterFilter { $m -like '✅ Accept all*' }
+    } finally { $Cfg.AcceptAllMinGapSec=0; $script:LastAcceptOk=[datetime]::MinValue }
+  }
+  It '25.10: JS Accept all не выбирает Cancel/Reject и элементы внутри кнопки отмены' {
+    $js=$script:AgJs
+    $js | Should -Match 'isStop\(x\)'
+    $js | Should -Match 'qa\(S\.busy\)\.some\(b=>b===x\|\|b\.contains\(x\)\)'
+    $js | Should -Match 'arg&&arg\.evenBusy'
   }
   It 'кнопки нет — не жмёт и не падает в UIA/фокус' {
     Mock AgCdp-AcceptAll { @{found=$false;busy=$false;files=0} }; Mock Invoke-WithFocus {}

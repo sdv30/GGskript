@@ -70,7 +70,7 @@ function Get-WindowBounds($h){
 
 # ---------- Окна ----------
 function Get-ForegroundHandle{ [GG.Native]::GetForegroundWindow() }
-function Set-ForegroundHandle($h){ [void][GG.Native]::SetForegroundWindow([IntPtr]$h) }
+function Set-ForegroundHandle($h){ if(-not (Test-WindowModeAllowed)){ return }; [void][GG.Native]::SetForegroundWindow([IntPtr]$h) }
 # Все видимые верхние окна в Z-порядке: @{h;title;class;pid;proc}
 function Get-TopWindows{
   $procs=@{}; foreach($p in Get-Process -EA 0){ $procs[[uint32]$p.Id]=$p.ProcessName }
@@ -89,7 +89,25 @@ function Get-WindowInfo($h){
 function Get-IdleMs{ [GG.Native]::IdleMs() }
 function Test-ModifiersDown{ foreach($vk in 0x10,0x11,0x12,0x5B,0x5C){ if([GG.Native]::GetAsyncKeyState($vk) -band 0x8000){ return $true } }; $false }
 
-function Activate-Window($h){ Assert-Running 'переключение окна';
+# пункт 57: воркер НИКОГДА не перехватывает фокус/клавиатуру/мышь/буфер, пока это не разрешено (AllowWindowMode) и пользователь не простаивает WindowModeIdleMin мин.
+function Test-WindowModeAllowed{
+  if(-not $script:GGWorker){ return $true }   # панель/тесты-утилиты — свои действия по кнопке пользователя
+  if(-not $Cfg.AllowWindowMode){ return $false }
+  $m=[double]$Cfg.WindowModeIdleMin; if($m -le 0){ return $true }
+  try{ return ((Get-IdleMs) -ge $m*60000) }catch{ return $false }
+}
+$script:WindowModeSaid=$null
+function Assert-WindowMode([string]$ctx='действие'){
+  if(Test-WindowModeAllowed){ return }
+  $why= if(-not $Cfg.AllowWindowMode){ 'оконный режим выключен (AllowWindowMode=false) — работаю только через порты отладки' } else { "пользователь активен (нужно $($Cfg.WindowModeIdleMin) мин без мыши/клавиатуры)" }
+  if(-not $script:WindowModeSaid -or ((Get-Date)-$script:WindowModeSaid).TotalMinutes -ge 30){
+    $script:WindowModeSaid=Get-Date
+    $m="🛡 Не перехватываю фокус/клавиатуру/мышь ($ctx): $why. Откройте Gemini через «🌐 Chrome с портом» и IDE через «🛠 … с портом»."
+    try{ if(Get-Command Log -EA 0){ Log $m } }catch{}; try{ if(Get-Command Tg-Send -EA 0){ Tg-Send $m -DedupMin 30 | Out-Null } }catch{}
+  }
+  throw [GG.RelayNotSentException]::new("оконный режим запрещён ($ctx): $why — НЕ отправлено")
+}
+function Activate-Window($h){ Assert-Running 'переключение окна'; Assert-WindowMode 'переключение окна';
   $h=[IntPtr]$h
   if([GG.Native]::IsIconic($h)){ [void][GG.Native]::ShowWindow($h,9); Start-Sleep -Milliseconds 400 }
   for($i=0;$i -lt 5;$i++){
@@ -145,7 +163,7 @@ function Test-StopNow{
 function Assert-Running([string]$ctx='действие'){ if(Test-StopNow){ throw [GG.RelayPausedException]::new("СТОП — $ctx прервано") } }
 # ---------- Клавиатура и мышь ----------
 function Wait-ModifiersUp([int]$MaxMs=3000){ $t0=Get-Date; while((Test-ModifiersDown) -and ((Get-Date)-$t0).TotalMilliseconds -lt $MaxMs){ Start-Sleep -Milliseconds 100 } }
-function KeyDown([int]$vk){ Assert-Running 'нажатие клавиши'; [GG.Native]::keybd_event([byte]$vk,0,0,0) }
+function KeyDown([int]$vk){ Assert-Running 'нажатие клавиши'; Assert-WindowMode 'нажатие клавиши'; [GG.Native]::keybd_event([byte]$vk,0,0,0) }
 function KeyUp([int]$vk){ [GG.Native]::keybd_event([byte]$vk,0,2,0) }
 function Send-Key([int]$vk){ KeyDown $vk; try{ Start-Sleep -Milliseconds 30 } finally { KeyUp $vk }; Start-Sleep -Milliseconds 80 }
 function Send-Ctrl([int]$vk){ Wait-ModifiersUp; KeyDown 0x11; try{ Start-Sleep -Milliseconds 30; Send-Key $vk } finally { KeyUp 0x11 }; Start-Sleep -Milliseconds 150 }
@@ -159,7 +177,7 @@ function Test-WindowPing($h,[int]$TimeoutMs=2000){ try{ $r=[UIntPtr]::Zero; [GG.
 function Test-ProcessResponding($ProcessId){ try{ [bool](Get-Process -Id $ProcessId -EA Stop).Responding }catch{ $null } }
 function PressEsc{ Wait-ModifiersUp; Send-Key 0x1B }
 function ClickAt($x,$y){
-  Assert-Running 'клик мышью'
+  Assert-Running 'клик мышью'; Assert-WindowMode 'клик мышью'
   $p=[System.Windows.Forms.Cursor]::Position
   [void][GG.Native]::SetCursorPos([int]$x,[int]$y); Start-Sleep -Milliseconds 150
   [GG.Native]::mouse_event(2,0,0,0,0); [GG.Native]::mouse_event(4,0,0,0,0); Start-Sleep -Milliseconds 300
@@ -171,7 +189,7 @@ function ClickRel($h,$fx,$fy){ $r=Get-WindowBounds $h; ClickAt ($r.L+($r.R-$r.L)
 function Get-ClipSeq{ [GG.Native]::GetClipboardSequenceNumber() }
 function Get-ClipText{ for($i=0;$i -lt 10;$i++){ try{ return [System.Windows.Forms.Clipboard]::GetText() }catch{ Start-Sleep -Milliseconds 300 } }; throw 'Буфер обмена занят (чтение)' }
 function Set-ClipText([string]$Text){
-  Assert-Running 'запись в буфер обмена'
+  Assert-Running 'запись в буфер обмена'; Assert-WindowMode 'запись в буфер обмена'
   $do=New-Object System.Windows.Forms.DataObject
   $do.SetText($Text,[System.Windows.Forms.TextDataFormat]::UnicodeText)
   if($Cfg.ClipExcludeHistory){

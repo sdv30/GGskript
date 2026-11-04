@@ -14,6 +14,7 @@ function New-TestCfg([string]$Root){
   $cfg.DupAnswerWaitSec=0; $cfg.WaitAfterLastPrompt=$false   # пункт 31: старые тесты — прежнее поведение; Item31 включает явно
   $cfg.MaxReportAgeHours=0   # пункт 43: старые тесты с фиксированными датами файлов; Item43 включает явно
   $cfg.AutoDecide=$false; $cfg.AutoSendGraceSec=0   # пункт 35: старые тесты — прежнее поведение; Item35 включает явно
+  $cfg.AcceptAllMinGapSec=0; $cfg.GemTabProbe=$false; $cfg.ForeignChatGuard=$false; $cfg.TurnByAgFact=$false   # 25.10 (tabfix): старые тесты не читают живые вкладки; Item62 включает явно
   $cfg
 }
 # Защита от побочных эффектов: функции, которые трогают буфер обмена, экран, сеть Telegram и браузер, в тестах

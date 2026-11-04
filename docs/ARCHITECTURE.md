@@ -1,43 +1,40 @@
 # GGskript v2 — архитектура
 
 Документ для инженера: из чего состоит программа, как идут данные и как она связана с внешним миром.
-Основано на коде в `lib\*.ps1`, `GGskript.ps1`, `GGskript_gui.ps1` (состояние на 19.10.2026, пункты плана 1–29).
+Основано на коде в `lib\*.ps1`, `GGskript.ps1`, `GGskript_gui.ps1` (состояние на **04.11.2026**, пункты плана 1–65 и правки 25.10–02.11). Краткий снимок: [CURRENT.md](CURRENT.md).
 
 ## 1. Компоненты
 
 ```mermaid
 flowchart LR
   subgraph PC["Windows-ПК пользователя"]
-    LNK["Ярлык GGskript.lnk"] --> VBS["GGskript_launch.vbs<br/>(скрытый запуск)"]
-    VBS --> GUI["GGskript_gui.ps1<br/>панель WinForms"]
-    GUI -- "Start-Process (скрыто)" --> W["GGskript.ps1<br/>воркер: главный цикл"]
-    BAT["GGskript.bat<br/>воркер в консоли"] --> W
-    GUI -. "PAUSE / STOP / commands.txt" .-> FS[("Папка проекта<br/>состояние, журнал")]
+    LNK["Ярлык GGskript.lnk"] --> VBS["GGskript_launch.vbs"]
+    VBS --> GUI["GGskript_gui.ps1<br/>ход + выбор IDE + Выключить"]
+    GUI -- "скрытый Start-Process" --> W["GGskript.ps1 воркер"]
+    BAT["GGskript.bat"] --> W
+    GUI -. "PAUSE / STOP / commands.txt" .-> FS[("relay_* состояние")]
     W <--> FS
-    GUI -. "чтение relay_status.json,<br/>relay_log.txt" .-> FS
-    DL[("%USERPROFILE%\Downloads<br/>Проект_ГГГГ-ММ-ДД_NNN.md")]
-    AG["Antigravity IDE<br/>(агент, младшая модель)"]
-    BR["Браузер с Gemini<br/>(старшая модель, Argon)"]
-    AG -- "пишет отчёт" --> DL
-    W -- "читает новые файлы" --> DL
-    W -- "UIA или CDP :9222<br/>отправка, чтение ответа, модель, лимиты" --> BR
-    W -- "UIA или CDP :9333<br/>вставка задания, Accept all" --> AG
-    W -- "HTTP 127.0.0.1 (language_server)<br/>лимиты Antigravity" --> AG
+    DL[("Downloads<br/>*_YYYY-MM-DD_NNN.md")]
+    IDE["IDE: Antigravity :9333<br/>Harness :9334 / Cursor :9335"]
+    BR["Chrome Gemini CDP :9222<br/>Argon"]
+    IDE -- "отчёт" --> DL
+    W -- "читает" --> DL
+    W -- "CDP 9222 attach только если Argon" --> BR
+    W -- "CDP/UIA вставка Markdown-блока" --> IDE
     W -- "shutdown.exe" --> WIN["Windows"]
   end
-  TG["Telegram Bot API<br/>@YourBot"]
-  W <-- "HTTPS long-poll / sendMessage" --> TG
-  U["Владелец (телефон)"] <--> TG
+  TG["Telegram"]
+  W <-- "HTTPS" --> TG
 ```
 
 | Компонент | Файл | Роль |
 |---|---|---|
 | Запускатор | `GGskript_launch.vbs` | Запускает панель скрыто (`powershell -STA -WindowStyle Hidden`), путь — от своего расположения |
-| Панель | `GGskript_gui.ps1` + `lib\Gui.Core.ps1` | Кнопки Старт/Стоп/Выключить/Лимиты/Статус/Accept All/Скриншот/Открыть папку, хвост журнала, строка команды. С воркером общается только через файлы |
+| Панель | `GGskript_gui.ps1` + `lib\Gui.Core.ps1` | Индикатор хода, выпадающий выбор IDE на правой плитке (при Стоп), красная «⛔ Выключить скрипт», Старт/Стоп/Лимиты/Accept All/скрин/журнал/команды. Связь с воркером только через файлы |
 | Воркер | `GGskript.ps1` | Загружает `lib\*.ps1`, настройки, состояние; тестовые режимы `-test*`; главный цикл `Invoke-MainStep` |
-| Логика передачи | `lib\Relay.ps1` | Очередь файлов, отправка в Gemini, ожидание ответа, передача в Antigravity, лимиты, автовозобновление, протокол запуска, команды, блокирующие окна |
+| Логика передачи | `lib\Relay.ps1` | Очередь, attach в Gemini (только Argon), ход по step id/ask-filename, chip match / no re-send, передача в IDE, лимиты FlashLite→STOP, автовозобновление, команды |
 | Gemini | `lib\Gemini.ps1` (фасад `Gem-*`), `lib\Gemini.Uia.ps1`, `lib\Gemini.Cdp.ps1` | Два транспорта с одинаковым интерфейсом и безопасным откатом CDP→UIA |
-| Antigravity | `lib\Antigravity.ps1` (UIA, почтовый ящик, `Ag-Send`), `lib\Antigravity.Cdp.ps1` | Безопасная вставка: проверка зависания, чужого текста, занятости агента |
+| Harness / Cursor | `lib\DsHarness.Cdp.ps1` | CDP-only для `AgTarget` dsharness/cursor; порты 9334/9335; общие селекторы + `CursorCdpSelDefault` |`r`n| Antigravity | `lib\Antigravity.ps1` (UIA, почтовый ящик, `Ag-Send`), `lib\Antigravity.Cdp.ps1` | Безопасная вставка: проверка зависания, чужого текста, занятости агента |
 | Telegram | `lib\Telegram.ps1`, `lib\Chat.ps1` | Токен (DPAPI), опрос, отправка, кнопки, вопросы с подтверждением |
 | Выключение ПК | `lib\Shutdown.ps1` | План в `relay_shutdown.json`, подтверждение, вызов `shutdown.exe` |
 | Платформа | `lib\Platform.Win.ps1`, `lib\Uia.ps1` | WinAPI (окна, фокус, клавиатура, буфер, DPI, мьютексы, DPAPI, скриншот), обёртки UI Automation |
@@ -160,3 +157,41 @@ stateDiagram-v2
 - Команды и кнопки принимаются только от `chat_id` владельца; опасные команды (стоп/прими/старт) в строгом режиме — только точной формой (`StrictCommands`); выключение ПК и «выключи скрипт» — с подтверждением.
 - Системные окна (UAC, учётные данные, Secure Desktop) не нажимаются никогда (`Test-ForbiddenWindow`).
 - Внутри Gemini/Antigravity GGskript не нажимает кнопки отмены/остановки агента.
+
+## 9. Поведение после пунктов 51–61 (актуально)
+
+1. **Три IDE** через `AgTarget`; GUI-меню на плитке хода; `Test-IsDsh` включает cursor.
+2. **NoFocus:** `AllowWindowMode=$false`, `GeminiCdpFallback=$false`; `Assert-WindowMode` в Platform.Win для фокуса/клавиш/мыши/буфера.
+3. **Маркеры Argon v2–v4:** step id + «конец задания»; legacy END-теги; акт исполнителя `Get-JuniorActDone`.
+4. **Ход:** `Get-BlockAsk` = заголовок или имя файла в тексте просьбы Gemini.
+5. **Вложения:** `Find-FileInTexts` → `attached`; `Test-ChipMatchesName` для усечённых chip; не слать повторно уже прикреплённый отчёт.
+6. **Промпты** в `prompts\` задают контракт; код их не читает, но парсит тот же формат имён и блоков.
+## 10. Порты CDP
+
+| Порт | Приложение | Модуль |
+|---|---|---|
+| 9222 | Chrome с Gemini (отдельный профиль) | `Gemini.Cdp.ps1` |
+| 9333 | Antigravity | `Antigravity.Cdp.ps1` (+ UIA `Antigravity.ps1`) |
+| 9334 | DeepSeek Harness (встроенный 9230 не используется) | `DsHarness.Cdp.ps1` |
+| 9335 | Cursor | `DsHarness.Cdp.ps1` (`CursorCdpSelDefault`) |
+
+Приложения запускаются с портом кнопками панели («🌐 Chrome с портом», «🛠 <IDE> с портом»). IDE выбирается `AgTarget` (`antigravity` | `dsharness` | `cursor`, сохраняется в `relay_settings.json`) — выпадающим списком на правой плитке индикатора хода или командой `ide …`, только в режиме Стоп.
+
+## 11. Контракт с промптами
+
+Код опирается на формат, который задают `prompts\ARGON_SYSTEM_PROMPT.md` и `prompts\FLASH_SYSTEM_PROMPT.md` (подробно — README, «Промпты — часть системы»):
+
+- последний блок кода с подписью из `CodeBlockLang` → `Get-BlockAsk` = `Get-PromptHeader` (заголовок `[Project] [S<N>]` / `[Project] [REWORK S<N>]` в первых 4 строках, либо step id `Project_YYYY-MM-DD_NNN` в первых 6) → иначе `Get-AskedReportFromText` (имя `…_NNN.md` в тексте);
+- отчёты в `Downloads` по `Pattern` → `Get-ReportCandidates` (фильтр по проекту и возрасту, сортировка по времени файла и номеру) → `Get-ActiveProject`;
+- акт исполнителя `Отчет <имя>.md создан и лежит в папке <путь>` → `Get-JuniorActDone`;
+- отчёты проекта в чате Gemini → `Test-ChatHasProjectReports` (защита `ForeignChatGuard`).
+
+## 12. Изменения 25.10–02.11
+
+1. **Вкладки и аккаунты Gemini**: `Select-GeminiChatTarget`, `Get-GeminiAccountIndex` (`/u/N`), лимиты того же аккаунта (`Get-GeminiUsageUrl`); `Invoke-AccountWatch` раз в минуту на остановке по лимиту; кнопка «🔄 Сменил аккаунт» → команда `/pc_acct` → сброс CDP, выбор вкладки, перечитывание лимита/модели, `Resume-Work`.
+2. **Лимиты**: не-Argon → `Enter-LimitStop` (ничего не отправляется); `AutoResume` + `AutoSwitchModel` возвращают Argon; Antigravity — стоп при остатке ≤ 1% (`AgThreshold`), Gemini — при 100% использования.
+3. **Accept all**: `AutoAcceptAll`, `AcceptAllWhileBusy`, `AcceptAllMinGapSec`; только CDP click() по точному тексту.
+4. **Отправка файла в Gemini**: чипы только из поля ввода, сверка обрезанного имени (`Test-ChipMatchesName`), проверка нового запроса с файлом.
+5. **Новая серия шагов**: `Test-StepSeriesRestart`, `Reset-StepSeries`, `Invoke-StepSeriesCheck` (`Get-TurnDecisionNow`, `Next-File`), `Clear-StaleStepRecords`.
+6. **Журнал**: `Invoke-LogArchive` (архив в `logs\` при запуске, последние 10), очистка с панели; цвета — `Get-LogLevel`/`Get-LogColor` (`Gui.Core.ps1`).
+7. **Стоп и выключение**: «⏸ Стоп» — воркер жив, слушает Telegram, ничего не трогает (файл `PAUSE`); «⛔ Выключить скрипт» и «Да» при закрытии панели — файл `STOP`, воркер завершается; «Нет» при закрытии — работа в фоне.

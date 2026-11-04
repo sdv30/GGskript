@@ -51,9 +51,13 @@ Describe 'Пункт 51: маршрутизация через выбранну�
     Mock DshCdp-AcceptAll { if($Dry){ @{found=$true;ok=$false;busy=$false} } else { @{found=$true;ok=$true} } }
     Try-AcceptAll | Should -BeTrue; Should -Invoke DshCdp-AcceptAll -Times 1 -ParameterFilter { -not $Dry }
   }
-  It 'dsharness: агент работает — не жмёт' {
-    $Cfg.AgTarget='dsharness'; Mock DshCdp-AcceptAll { @{found=$true;ok=$false;busy=$true} }
-    Try-AcceptAll | Should -BeFalse; Should -Invoke DshCdp-AcceptAll -Times 0 -ParameterFilter { -not $Dry }
+  It 'dsharness: агент работает, AcceptAllWhileBusy=$false — не жмёт' {
+    $Cfg.AgTarget='dsharness'; $Cfg.AcceptAllWhileBusy=$false; Mock DshCdp-AcceptAll { @{found=$true;ok=$false;busy=$true} }
+    try{ Try-AcceptAll | Should -BeFalse; Should -Invoke DshCdp-AcceptAll -Times 0 -ParameterFilter { -not $Dry } } finally { $Cfg.AcceptAllWhileBusy=$true }
+  }
+  It '25.10 dsharness: агент работает, AcceptAllWhileBusy — жмёт сразу (EvenBusy)' {
+    $Cfg.AgTarget='dsharness'; Mock DshCdp-AcceptAll { if($Dry){ @{found=$true;ok=$false;busy=$true} } else { @{found=$true;ok=[bool]$EvenBusy;busy=$true} } }
+    Try-AcceptAll | Should -BeTrue; Should -Invoke DshCdp-AcceptAll -Times 1 -ParameterFilter { -not $Dry -and $EvenBusy }
   }
   It 'dsharness: Try-AutoAllow — только DshCdp-AllowPrompt' {
     $Cfg.AgTarget='dsharness'; $Cfg.AutoAllowPrompts=$true; Mock DshCdp-AllowPrompt { @{found=$true;ok=$true;opt='Разрешить'} }; Mock AgCdp-AllowPrompt {}; Mock Ag-GetWindow { throw 'нельзя' }
@@ -77,12 +81,12 @@ Describe 'Пункт 51: DshCdp-Send — гарантии' -Tag Item51 {
     { DshCdp-Send -Text 'наше задание' } | Should -Throw '*чужой текст*'; Should -Invoke Invoke-Cdp -Times 0 -ParameterFilter { $Method -eq 'Input.insertText' }
   }
   It 'нормальный путь: вставка, Enter, поле опустело' {
-    $script:dshField=''
+    $script:dshField=''; $Cfg.AgTarget='dsharness'
     Mock DshEval-Js { if($Op -eq 'busy'){ $false } elseif($Op -eq 'inputText'){ $script:dshField } else { $true } }
     Mock Invoke-Cdp { if($Method -eq 'Input.insertText'){ $script:dshField=$Params.text }; if($Method -eq 'Input.dispatchKeyEvent'){ $script:dshField='' }; @{} }
     DshCdp-Send -Text 'Тест связи GGskript: ответь одним словом OK' -Label 'тест'
     Should -Invoke Invoke-Cdp -Times 1 -ParameterFilter { $Method -eq 'Input.insertText' }
-    Should -Invoke Log -ParameterFilter { $m -like 'Отправлено в DeepSeek Harness*' }
+    Should -Invoke Log -ParameterFilter { $m -like 'Отправлено в DeepSeek Harness*' }; $Cfg.AgTarget='antigravity'
   }
 }
 Describe 'Пункт 51: панель' -Tag Item51 {
@@ -90,7 +94,7 @@ Describe 'Пункт 51: панель' -Tag Item51 {
     $v=Get-TurnView 'antigravity' $true 'DeepSeek Harness'; $v.Caption | Should -Be 'Ход DeepSeek Harness'; $v.Ide | Should -Be 'DeepSeek Harness'
     (Get-TurnView 'antigravity').Caption | Should -Be 'Ход Antigravity'; (Get-TurnView 'gemini' $true 'DeepSeek Harness').Caption | Should -Be 'Ход Gemini'
   }
-  It 'Get-IdeChoices: два варианта' { @(Get-IdeChoices).Count | Should -Be 2; (@(Get-IdeChoices))[1].t | Should -Be 'DeepSeek Harness' }
+  It 'Get-IdeChoices: три варианта (пункт 55: + Cursor)' { @(Get-IdeChoices).Count | Should -Be 3; (@(Get-IdeChoices))[1].t | Should -Be 'DeepSeek Harness' }
   It 'Restart-DshCdp: закрывает, добивает остатки (трей), запускает с портом' {
     Mock Test-PortUp { $false }; Mock Get-DshExe { 'C:\h\DeepSeek Harness.exe' }; Mock Start-Sleep {}
     $script:procs=@([pscustomobject]@{ Id=1; MainWindowHandle=[IntPtr]::Zero },[pscustomobject]@{ Id=2; MainWindowHandle=[IntPtr]::Zero })

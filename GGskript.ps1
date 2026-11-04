@@ -30,6 +30,7 @@ if(-not $isTest){
     else { Write-Host 'GGskript уже запущен и работает. Это окно можно закрыть.' }
     Start-Sleep 4; exit
   }
+  try{ [void](Invoke-LogArchive -Path $Cfg.LogFile -Dir (Join-Path $Root 'logs') -Keep 10) }catch{}   # 02.11: каждый запуск — чистый журнал, прежний в logs\
   if(Disable-QuickEdit){ Log 'Режим выделения мышью в консоли отключён (клик в окне больше не ставит скрипт на паузу).' }
 }
 $script:Paused=Test-Path -LiteralPath $Cfg.PauseFile
@@ -44,6 +45,8 @@ else{
   if(-not $rs.Error){ foreach($f in @(Get-Files)){ [void](Set-FileStage $script:St $f.Name 'done' -Force) }; Log 'Первый запуск: существующие файлы считаю обработанными.' }
   else { Log "⚠️ Состояние не прочитано ($($rs.Error)) и .bak нет — начинаю с пустого учёта" }
 }
+# 25.10 (tabfix): миграция учёта — имя проекта с пробелом было обрезано («Fishka 2» -> «2») в lastBlock/sent
+try{ [void](Get-ActiveProjectNow); $fx=Repair-StateProjectNames $script:St @($script:KnownProjects); if($fx -gt 0){ Save-State; Log "Учёт: исправил обрезанные имена проектов ($fx записей, например «2» → «$(@($script:KnownProjects | Where-Object { $_ -match ' ' })[0])»)" } }catch{ Log "Учёт: миграция имён проектов не удалась ($($_.Exception.Message))" }
 $start=$args | Where-Object { $_ -notlike '-*' } | Select-Object -First 1
 if($start){
   $sk=Get-SortKey $start $Cfg.Pattern
@@ -135,11 +138,11 @@ if($args -contains '-testgemini'){
 # -testdsh — пункт 51: DeepSeek Harness через CDP (только чтение). -testdshsend "<текст>" — отправить одно сообщение и прочитать ответ.
 if($args -contains '-testdsh' -or $args -contains '-testdshsend'){
   $tdD=Get-DshCdpDiag
-  Log "DeepSeek Harness CDP (порт $($tdD.port)): $(if($tdD.err){"ОШИБКА: $($tdD.err)"}else{"окно «$($tdD.chat)»; поле: $(([string]$tdD.field).Length) симв.; занят: $($tdD.busy); 429: $($tdD.limit.rate); контекст: $($tdD.limit.ctx)%; доступ: $($tdD.limit.access); модель: $($tdD.limit.model); $(@($tdD.limit.stats) -join ', ')"})"
+  Log "$(Get-IdeName) CDP (порт $($tdD.port)): $(if($tdD.err){"ОШИБКА: $($tdD.err)"}else{"окно «$($tdD.chat)»; поле: $(([string]$tdD.field).Length) симв.; занят: $($tdD.busy); 429: $($tdD.limit.rate); контекст: $($tdD.limit.ctx)%; доступ: $($tdD.limit.access); модель: $($tdD.limit.model); $(@($tdD.limit.stats) -join ', ')"})"
   $tdI=[array]::IndexOf($args,'-testdshsend')
   if($tdI -ge 0 -and -not $tdD.err){
     $tdT=[string]$args[$tdI+1]; if(-not $tdT){ $tdT='Тест связи GGskript: ответь одним словом OK' }
-    try{ DshCdp-Send -Text $tdT -Label 'тест связи'; $tdR=DshCdp-WaitReply 180; Log "  ответ Harness: $(if($tdR.ok){"«$($tdR.text)»"}else{"НЕТ — $($tdR.error)"})" }catch{ Log "  ОШИБКА отправки: $($_.Exception.Message)" }
+    try{ DshCdp-Send -Text $tdT -Label 'тест связи'; $tdR=DshCdp-WaitReply 180; Log "  ответ $(Get-IdeName): $(if($tdR.ok){"«$($tdR.text)»"}else{"НЕТ — $($tdR.error)"})" }catch{ Log "  ОШИБКА отправки: $($_.Exception.Message)" }
   }
   exit
 }
@@ -163,7 +166,7 @@ if($args -contains '-testcdp'){
 }
 
 # ---- Работа ----
-Log "GGskript v2 запущен (pid $PID). Папка: $($Cfg.Downloads). Транспорт: Gemini=$($Cfg.GeminiTransport), Antigravity=$($Cfg.AgTransport). DPI=$script:DpiMode.$(if($script:Paused){' Сейчас СТОП (файл PAUSE): жду «Старт».'})"
+Log "GGskript v2 запущен (pid $PID). Папка: $($Cfg.Downloads). IDE: $(Get-IdeName). Транспорт: Gemini=$($Cfg.GeminiTransport), $(Get-IdeName)=$(if(Test-IsDsh){'cdp'}else{$Cfg.AgTransport}). DPI=$script:DpiMode.$(if($script:Paused){' Сейчас СТОП (файл PAUSE): жду «Старт».'})"
 Init-Tg; if($script:TgChat){ Log 'Telegram: принимаю команды (напишите боту «помощь»)' }
 Write-Status -Force
 try{

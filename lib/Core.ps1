@@ -23,6 +23,9 @@ namespace GG {
 }
 
 # ---------- Настройки ----------
+# пункт 54: имя выбранной IDE для текстов (определено и в DsHarness.Cdp.ps1)
+function Test-IsDsh{ [string]$Cfg.AgTarget -in @('dsharness','cursor') }
+function Get-IdeName{ switch([string]$Cfg.AgTarget){ 'dsharness'{'DeepSeek Harness'} 'cursor'{'Cursor'} default{'Antigravity'} } }
 function Get-DefaultSettings{
   param([Parameter(Mandatory)][string]$Root,[string]$UserProfile=$env:USERPROFILE)
   if(-not $UserProfile){ $UserProfile=$HOME }
@@ -52,7 +55,13 @@ function Get-DefaultSettings{
     CodeBlockPick    = 'last'
     ModelMustContain = 'Argon'
     ModelRecheckSec  = 60
+AccountWatch     = $true     # 27.10: на остановке по лимиту раз в AccountWatchSec сек сверяю вкладку/аккаунт и наличие Argon; сменили аккаунт — продолжаю сам
+AccountWatchSec  = 60
+AccountRetryMin = 10          # повторная попытка возобновления при неизменном «Argon доступен» — не чаще (чтобы не засыпать Telegram)
+AccountMenuProbeMin = 5      # как часто открывать меню моделей через CDP (без фокуса), чтобы увидеть, что Argon снова доступен
     AcceptAllEverySec= 12
+    AcceptAllWhileBusy= $true      # 25.10: жать «Accept all» сразу по обнаружению, и пока агент работает ($false — как раньше: только когда агент закончил)
+    AcceptAllMinGapSec= 20          # 25.10: антидребезг — после нажатия следующее не раньше чем через N сек
     AgQueueWaitSec   = 30
     AgQueueCheckSec  = 10
     AgQueueMaxTries  = 3
@@ -135,7 +144,10 @@ function Get-DefaultSettings{
     AgTarget           = 'antigravity'  # пункт 51: IDE-сторона — 'antigravity' или 'dsharness' (DeepSeek Harness, только CDP)
     DshCdpPort         = 9334       # порт DevTools DeepSeek Harness (кнопка «🛠 Harness с портом»)
     DshCdpSelectors    = @{}        # переопределение селекторов DeepSeek Harness (см. lib/DsHarness.Cdp.ps1)
-    DshAllowOptionRx   = '^(Разрешить( один раз| однократно)?|Allow( once| this time)?|Yes, allow this time)$'  # автоподтверждение в Harness: только «один раз»
+    CursorCdpPort      = 9335       # пункт 55: порт DevTools Cursor (кнопка «🛠 Cursor с портом»)
+  CursorCdpSelectors = @{}        # переопределение селекторов Cursor (см. lib/DsHarness.Cdp.ps1)
+  CursorAllowOptionRx= '^(Run|Allow|Запустить|Разрешить)$'  # автоподтверждение в Cursor: только «Run»/«Allow» (Skip/Allowlist/always — никогда)
+  DshAllowOptionRx   = '^(Разрешить( один раз| однократно)?|Allow( once| this time)?|Yes, allow this time)$'  # автоподтверждение в Harness: только «один раз»
     AgCdpFallback      = $true      # CDP Antigravity недоступен — отправка через UIA (с фокусом) и одно сообщение в Telegram
     AgCdpSelectors     = @{}        # переопределение селекторов чата Antigravity (см. lib/Antigravity.Cdp.ps1)
     AgInvokeNoFocus    = $true      # пункт 27B: «Accept all» сначала нажимать через UIA Invoke без вывода окна на передний план
@@ -182,10 +194,16 @@ function Get-DefaultSettings{
     InboxDir           = (Join-Path $Root 'inbox')
     MailboxAckSec      = 120
     GeminiTransport    = 'uia'      # 'uia' (как раньше) или 'cdp'
-    GeminiCdpFallback  = $true      # пункт 27A: откат на UIA ТОЛЬКО если CDP недоступен (браузер без порта/нет вкладки), с сообщением в Telegram
+    GeminiCdpFallback  = $false     # пункт 57: без порта CDP в оконный режим (UIA, фокус, клавиатура) сам НЕ перехожу — только лог + Telegram
+    AllowWindowMode    = $false     # пункт 57: разрешить воркеру перехват фокуса/клавиатуры/мыши/буфера (оконный режим). По умолчанию — НИКОГДА
+    WindowModeIdleMin  = 0          # пункт 57: если AllowWindowMode — только когда пользователь не трогал мышь/клавиатуру N мин (0 = без условия)
     CdpPort            = 9222
     CdpRecheckSec      = 300        # CDP недоступен — повторная проверка порта не чаще раза в N с (между ними сразу UIA, без строк в логе)
     CdpUrlLike         = 'gemini.google.com'
+    GemTabProbe        = $true      # 25.10: несколько вкладок чата Gemini (аккаунты /u/N) — выбирать по фокусу/видимости/Argon/отчётам проекта и перепроверять
+    GemTabRecheckSec   = 30         # 25.10: как часто перепроверять лучшую вкладку чата Gemini (не во время ожидания ответа)
+    ForeignChatGuard   = $true      # 25.10: в чате Gemini нет отчётов текущего проекта (чужой/новый чат) — не отправлять, спросить (шаг 001 и «отправь заново» — можно)
+    TurnByAgFact       = $true      # 25.10: агент IDE работает (кнопка Cancel) — ход IDE, отчёт в Gemini не отправляю
     CdpSelectors       = @{}         # переопределение CSS-селекторов страницы Gemini для CDP (см. lib/Gemini.Cdp.ps1, $CdpSelDefault)
     MatchByContent     = $true      # пункт 27C: файл считается уже отправленным в Gemini и по содержимому (вручную отправленные)
     ContentKeyChars    = 120        # сколько букв/цифр с начала файла сравнивать
@@ -237,11 +255,11 @@ function Merge-Settings{
       $cfg[$k]=$nv
     }
   }
-  foreach($rx in 'Pattern','RxPrompt','RxCode','RxCopy','RxStop','RxModel','ModelMenuSkipRx','ModelSelectedRx','AgPlaceholderRx','AgSendNowName','AcceptAllName','AutoAllowOptionRx','AutoAllowSubmitRx','DshAllowOptionRx','UsageTabTitle','UsageExistingTabRx','SafeBtnRx'){
+  foreach($rx in 'Pattern','RxPrompt','RxCode','RxCopy','RxStop','RxModel','ModelMenuSkipRx','ModelSelectedRx','AgPlaceholderRx','AgSendNowName','AcceptAllName','AutoAllowOptionRx','AutoAllowSubmitRx','DshAllowOptionRx','CursorAllowOptionRx','UsageTabTitle','UsageExistingTabRx','SafeBtnRx'){
     try{ [void][regex]::new([string]$cfg[$rx]) }catch{ $warn.Add("Настройка '$rx' — некорректный регэксп, верну значение по умолчанию"); $cfg[$rx]=$Defaults[$rx] }
   }
   if($cfg.Pattern -notmatch '\?<project>' -or $cfg.Pattern -notmatch '\?<date>' -or $cfg.Pattern -notmatch '\?<n>'){ $warn.Add("В Pattern нет групп project/date/n — верну значение по умолчанию"); $cfg.Pattern=$Defaults.Pattern }
-  foreach($e in @(@('AgVerifyPaste','strict','lenient'),@('AgTransport','uia','cdp','mailbox'),@('AgTarget','antigravity','dsharness'),@('GeminiTransport','uia','cdp'),@('CodeBlockPick','last','first'),@('ScreenshotMode','dialog','full','off'),@('Sounds','important','off','all'))){
+  foreach($e in @(@('AgVerifyPaste','strict','lenient'),@('AgTransport','uia','cdp','mailbox'),@('AgTarget','antigravity','dsharness','cursor'),@('GeminiTransport','uia','cdp'),@('CodeBlockPick','last','first'),@('ScreenshotMode','dialog','full','off'),@('Sounds','important','off','all'))){
     if(@($e[1..($e.Count-1)]) -notcontains [string]$cfg[$e[0]]){ $warn.Add("Настройка '$($e[0])'='$($cfg[$e[0]])' не поддерживается — верну '$($Defaults[$e[0]])'"); $cfg[$e[0]]=$Defaults[$e[0]] }
   }
   [pscustomobject]@{ Cfg=$cfg; Warnings=$warn.ToArray() }
@@ -284,10 +302,18 @@ function Get-FirstLine([string]$Text,[int]$Max=60){
   $l=(([string]$Text) -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1); if(!$l){ return '' }
   $l=$l.Trim(); if($l.Length -gt $Max){ $l=$l.Substring(0,$Max)+'…' }; $l
 }
-# Пункт 28: есть ли текст (первые $N букв/цифр) в тексте страницы. $null — текст слишком короткий, не сужу.
-function Test-TextInBody([string]$Text,[string]$Body,[int]$N=120){
-  $k=Get-ContentKey $Text $N; if($k.Length -lt 20){ return $null }
-  (Get-ContentKey $Body).Contains($k)
+# Пункт 28/59: есть ли текст в теле страницы IDE. $null — слишком короткий, не сужу.
+# Длинные блоки Gemini начинаются одинаково («ROLE & OBJECTIVE…») — сверка только по первым N символам
+# давала ложное «уже в Antigravity» и скрипт НЕ вызывал Ag-Send. Для длинных текстов требую mid+tail.
+function Test-TextInBody([string]$Text,[string]$Body,[int]$N=0){
+  if($N -le 0){ $N= if($Cfg -and [int]$Cfg.ContentKeyChars -gt 0){ [int]$Cfg.ContentKeyChars } else { 120 } }
+  $min= if($Cfg -and [int]$Cfg.ContentKeyMin -gt 0){ [int]$Cfg.ContentKeyMin } else { 20 }
+  $full=Get-ContentKey $Text; if($full.Length -lt [Math]::Max(20,$min)){ return $null }
+  $bodyK=Get-ContentKey $Body
+  if($full.Length -le $N){ return [bool]$bodyK.Contains($full) }
+  $midStart=[Math]::Min($full.Length-$N, [Math]::Max(0, [int](($full.Length-$N)/2)))
+  $mid=$full.Substring($midStart,$N); $tail=$full.Substring($full.Length-$N)
+  [bool]($bodyK.Contains($mid) -and $bodyK.Contains($tail))
 }
 function Get-NormKey([string]$Text,[int]$Len=80){ $k=(([string]$Text) -replace '\s+',' ').Trim(); if($k.Length -gt $Len){ $k=$k.Substring(0,$Len) }; $k }
 function Get-Marker([string]$Text,[int]$Len=40){
@@ -325,6 +351,26 @@ function Remove-BrowserSuffix([string]$Title){
 }
 # ---------- Пункт 27C: узнать файл в чате Gemini по имени или по содержимому (чистая логика) ----------
 # Ключ: только буквы и цифры в нижнем регистре (разметка, пробелы, переносы не важны), без строки «Файл отчёта: …».
+
+# Пункт 59: Gemini на чипе файла пишет укороченное имя «Eskalator_…-10-23_007» — полное «Eskalator_2026-10-23_007» в like не совпадает.
+function Test-ChipMatchesName([string]$Chip,[string]$Name){
+  if(-not $Chip -or -not $Name){ return $false }
+  $base=$Name -replace '\.md$',''
+  if($Chip.IndexOf($Name,[StringComparison]::OrdinalIgnoreCase) -ge 0){ return $true }
+  if($Chip.IndexOf($base,[StringComparison]::OrdinalIgnoreCase) -ge 0){ return $true }
+  # 27.10 (sendfix): Gemini обрезает длинное имя чипа ПО ЦЕНТРУ: «AccessLabU...-10-27_001» (проект целиком не виден) — сверяю начало и конец
+  foreach($tm in [regex]::Matches($Chip,'(?<pre>[^\s.…]{3,})(?:\.\.\.|…)(?<suf>[^\s.…]{3,})')){
+    $pre=$tm.Groups['pre'].Value; $suf=$tm.Groups['suf'].Value
+    if($base.StartsWith($pre,[StringComparison]::OrdinalIgnoreCase) -and $base.EndsWith($suf,[StringComparison]::OrdinalIgnoreCase) -and ($pre.Length+$suf.Length) -le $base.Length){ return $true }
+  }
+  # Gemini: «Eskalator_…-10-23_007» / «Eskalator_...-10-23_007» — середина даты обрезана
+  $m=[regex]::Match($base,'^(?<proj>.+?)_(?<date>\d{4}-\d{2}-\d{2})_(?<n>\d+)$')
+  if($m.Success){
+    $proj=$m.Groups['proj'].Value; $date=$m.Groups['date'].Value; $n=$m.Groups['n'].Value; $md=$date.Substring(5) # MM-DD
+    if($Chip.IndexOf($proj,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and $Chip.IndexOf($n,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and ($Chip.IndexOf($date,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or $Chip.IndexOf($md,[StringComparison]::OrdinalIgnoreCase) -ge 0)){ return $true }
+  }
+  $false
+}
 function Get-ContentKey([string]$Text,[int]$N=0){
   $t=[string]$Text -replace '(?m)^\s*Файл отчёта:\s*\S+\s*$',''
   $k=($t.ToLowerInvariant() -replace '[^\p{L}\p{N}]','')
@@ -355,16 +401,21 @@ function Find-FileInTexts{
   param([string]$Name,[string]$Content,[string[]]$Texts,[switch]$Whole)
   $T=@($Texts | ForEach-Object { [string]$_ }); if(-not $T.Count){ return $null }
   $hdr='Файл отчёта:\s*(\S+\.md)'
-  $idx=-1; $how=''
-  # по имени: строка «Файл отчёта: <имя>» (так шлёт GGskript) или элемент, равный имени файла (вложение-«чип»). Упоминание имени в ответе Gemini — не в счёт.
+  $idx=-1; $how=''; $attached=$false
+  # по имени: вложение («Файл отчёта:», чип, целая строка-имя) vs упоминание в длинной фразе.
+  # CDP (-Whole): строки из filesOf/Pattern — это вложения (attached=$true). UIA: точное равенство Text-элемента может быть ложным чипом в ответе (attached=$false).
   if($Name){
     $base=$Name -replace '\.md$',''
     for($i=$T.Count-1;$i -ge 0;$i--){
-      $x=$T[$i].Trim()
-      # пункт 28: все заголовки и строки-«чипы» запроса (в одном запросе может быть несколько вложений)
-      # (UIA: элементы — и ответы Gemini тоже, поэтому там строки-«чипы» внутри текста не считаю, только заголовки и точное равенство)
-      $nm=@(Get-ReportNamesInText $x $(if($Whole){ $Cfg.Pattern } else { '' }))
-      if($x -ieq $Name -or $x -ieq $base -or ($nm -contains $Name)){ $idx=$i; $how='name'; break }
+      $x=$T[$i].Trim(); if(-not $x){ continue }
+      if($x -match ('(?i)^Файл отчёта:\s*'+[regex]::Escape($Name)+'\s*$') -or $x -match ('(?i)^Файл отчёта:\s*'+[regex]::Escape($base)+'(?:\.md)?\s*$')){ $idx=$i; $how='name'; $attached=$true; break }
+      if($Whole){
+        $nm=@(Get-ReportNamesInText $x $Cfg.Pattern)
+        if($nm -contains $Name -or $x -ieq $Name -or $x -ieq $base -or (Test-ChipMatchesName $x $Name)){ $idx=$i; $how='name'; $attached=$true; break }
+      } else {
+        if($x -ieq $Name -or $x -ieq $base){ $idx=$i; $how='name'; $attached=$false; break }  # UIA: слабое совпадение
+        if($x -match ('(?i)Файл отчёта:\s*'+[regex]::Escape($Name))){ $idx=$i; $how='name'; $attached=$true; break }
+      }
     }
   }
   if($idx -lt 0 -and $Content -and $Cfg.MatchByContent){
@@ -384,7 +435,7 @@ function Find-FileInTexts{
   $last=$true
   if($Whole){ $last=($idx -eq $T.Count-1) }
   else{ for($i=$idx+1;$i -lt $T.Count;$i++){ $mm=[regex]::Match($T[$i],$hdr); if($mm.Success -and $mm.Groups[1].Value -ne $Name){ $last=$false; break } } }
-  @{ how=$how; index=$idx; last=[bool]$last }
+  @{ how=$how; index=$idx; last=[bool]$last; attached=[bool]$attached }
 }
 # ---------- Пункт 26: вкладки лимитов/чата (чистая логика над списком @{name;el}) ----------
 function Test-UsageTabName([string]$Name){ $n=Remove-BrowserSuffix $Name; [bool]($n -and $Cfg.UsageExistingTabRx -and $n -match $Cfg.UsageExistingTabRx) }
@@ -581,7 +632,7 @@ function Parse-Command{
   if(-not $t){ return @{k='unknown'} }
   $n=($t.ToLower() -replace 'ё','е')
   $gem='(?:дж?[еиы]м[еиы]н[иы]\w*|г[еи]м[еи]н[иы]\w*|gemini\w*|аргон\w*|старш\w*)'
-  $ag='(?:анти\s*-?\s*гр\w*|antigravity\w*|младш\w*|(?:deepseek\s+)?harness\w*|харнес\w*)'
+  $ag='(?:анти\s*-?\s*гр\w*|antigravity\w*|младш\w*|(?:deepseek\s+)?harness\w*|харнес\w*|cursor\w*|курсор\w*)'
   $verb='(?:напиши|написать|отправь|отправить|скажи|спроси|передай|пошли)'
   $end='\s*[.!]*\s*$'
   # кнопки «Gemini: текст» / «Antigravity: текст» и /gemini, /ag без текста — бот попросит текст
@@ -606,6 +657,7 @@ function Parse-Command{
     $a=[string]$matches[1]
     if($a -match '^(antigravity|антигравити|ag)$'){ return @{k='ide'; v='antigravity'} }
     if($a -match '^(dsharness|harness|харнес\w*|deepseek|dsh)$'){ return @{k='ide'; v='dsharness'} }
+    if($a -match '^(cursor|курсор\w*)$'){ return @{k='ide'; v='cursor'} }
     return @{k='ide'; v=$null}
   }
   # автопринятие «Accept all»: «автопринятие вкл|выкл», /autoaccept on|off

@@ -57,7 +57,15 @@ $script:GemJs=@'
     case 'focusClear': { const e=q(S.input); if(!e) return false; e.focus();
       if(txt(e).length){ document.execCommand('selectAll',false,null); document.execCommand('delete',false,null); }
       return document.activeElement===e||e.contains(document.activeElement); }
-    case 'chips': return qa('.attachment-preview-wrapper, uploader-file-preview, [data-test-id="file-preview"]').map(e=>((e.getAttribute('aria-label')||'')+' '+txt(e)).trim());
+    case 'chips': {
+      // 27.10 (sendfix): только чипы в ПОЛЕ ВВОДА. Раньше брались и вложения уже отправленных запросов (user-query) и кнопки «Посмотреть сведения об источнике…»
+      // (aria-label с «.md») — они давали ложное «чип есть» и мусор в сообщении об ошибке. Поле ввода = предок rich-textarea, внутри которого ещё нет истории чата.
+      const rt=q(S.input); if(!rt) return [];
+      let root=rt; while(root.parentElement && root.parentElement!==document.body && root.tagName!=='INPUT-CONTAINER' && !root.parentElement.querySelector('user-query, model-response')) root=root.parentElement;
+      const els=qa('.attachment-preview-wrapper, uploader-file-preview, [data-test-id="file-preview"], .file-preview-chip, gem-attachment, .new-file-preview-container, [class*="file-preview"], [class*="attachment-preview"], button[aria-label*=".md"]')
+        .filter(e=>root.contains(e)&&!e.closest('user-query, model-response')&&!e.matches('.multiple-button'));
+      const top=els.filter(e=>!els.some(o=>o!==e&&o.contains(e)));   // один элемент на чип (без вложенных дублей)
+      return top.map(e=>((e.getAttribute('aria-label')||'')+' '+txt(e)).replace(/\s+/g,' ').trim()).filter(s=>s.length>0); }
     // CSS-флаг i не меняет регистр кириллицы («Загрузка» ≠ «загруз»), поэтому кнопка ищется регуляркой в JS (Gemini RU: «Загрузка и инструменты»)
     case 'openUpload': { const rx=/загрузк|загрузить|меню загрузки|upload|add files|добавить файл/i;
       let b=qa('button').filter(vis).find(x=>rx.test((x.getAttribute('aria-label')||'')+''));
@@ -85,6 +93,7 @@ $script:GemJs=@'
       const n=txt(it).replace(/\s+/g,' ');
       if(it.disabled||it.getAttribute('aria-disabled')==='true') return {ok:false, err:'disabled', name:n};
       it.click(); return {ok:true, name:n}; }
+    case 'account': { const a=qa('a[aria-label],button[aria-label]').find(e=>/@/.test(e.getAttribute('aria-label')||'') && /google|аккаунт|account/i.test(e.getAttribute('aria-label')||'')); return a?((a.getAttribute('aria-label')||'')+'').replace(/\s+/g,' ').trim():''; }
     case 'modelClose': { const b=qa(S.modelBtn).find(vis); if(b && b.getAttribute('aria-expanded')==='true'){
         const bd=q('.cdk-overlay-backdrop'); if(bd) bd.click(); else document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true})); }
       return true; }
@@ -124,25 +133,85 @@ function Cdp-ReceiveText($Conn,[int]$TimeoutMs){
 
 # ---------- Протокол ----------
 $script:CdpConn=$null
+# 25.10 (tabfix): номер аккаунта Google во вкладке Gemini: .../u/N/... (без /u/ — аккаунт 0)
+function Get-GeminiAccountIndex([string]$Url){ $m=[regex]::Match([string]$Url,'gemini\.google\.com/u/(\d+)(/|$|\?)'); if($m.Success){ [int]$m.Groups[1].Value } else { 0 } }
+# 25.10 (tabfix): несколько вкладок чата Gemini (разные аккаунты /u/N) — выбираю по признакам, а не первую в /json/list.
+# $Probe[id] = @{ vis; focus; proj; argon } — прочитано со вкладки (Get-GeminiTabProbe). Чистая функция (тесты Item62).
+function Select-GeminiChatTarget($List,$Probe=@{}){
+  $c=@($List | Where-Object { $_.type -eq 'page' -and ([string]$_.url) -like "*$($Cfg.CdpUrlLike)*" -and ([string]$_.url) -notlike '*/usage*' })
+  # пункт 27A: вкладка чата (/app) важнее прочих страниц Gemini
+  $a=@($c | Where-Object { ([string]$_.url) -like '*/app*' })
+  if($a.Count -eq 0){ return @{ target=($c | Select-Object -First 1); ambiguous=$false; why='нет вкладки /app' } }
+  if($a.Count -eq 1){ return @{ target=$a[0]; ambiguous=$false; why='одна вкладка чата' } }
+  $best=$null; $bs=-1; $tie=$false
+  foreach($t in $a){
+    $p=$null; if($Probe){ $p=$Probe[[string]$t.id] }; $s=0
+    if($p){ if($p.focus){ $s+=8 }; if($p.vis){ $s+=4 }; if($p.argon){ $s+=2 }; if($p.proj){ $s+=1 } }
+    if($s -gt $bs){ $best=$t; $bs=$s; $tie=$false } elseif($s -eq $bs){ $tie=$true }
+  }
+  @{ target=$best; ambiguous=$tie; why="выбрана из $($a.Count) вкладок чата (оценка $bs$(if($tie){', есть равные'}))" }
+}
+# Чтение одной вкладки чата (только Runtime.evaluate, свой короткий сокет) -> @{vis;focus;model;argon;proj} или $null
+function Get-GeminiTabProbe($T){
+  $c=$null
+  try{
+    $c=Cdp-Open $T.webSocketDebuggerUrl
+    $r=Invoke-Cdp 'Runtime.evaluate' @{ expression='JSON.stringify({vis:document.visibilityState==="visible",focus:document.hasFocus()})'; returnByValue=$true } -TimeoutSec 5 -Conn $c
+    $o=[string]$r.result.value | ConvertFrom-Json
+    $m=''; try{ $m=[string](Eval-Js 'model' -Conn $c) }catch{}
+    $ap=''; try{ $ap=[string](Get-ActiveProjectNow) }catch{}
+    $pt=@(); try{ $pt=@(Eval-Js 'promptTexts' -Conn $c | ForEach-Object { [string]$_ }) }catch{}
+    @{ vis=[bool]$o.vis; focus=[bool]$o.focus; model=$m; argon=[bool]($m -and (Is-Argon $m)); proj=[bool]($ap -and (Test-ChatHasProjectReports $pt $ap)) }
+  }catch{ $null } finally { if($c){ Cdp-Close $c } }
+}
+$script:CdpPickInfo=$null; $script:CdpPickAt=[datetime]::MinValue; $script:CdpLastUrl=''
 function Find-CdpTarget{
   $list=@(Cdp-HttpJson '/json/list')
-  $c=@($list | Where-Object { $_.type -eq 'page' -and ([string]$_.url) -like "*$($Cfg.CdpUrlLike)*" -and ([string]$_.url) -notlike '*/usage*' })
-  # пункт 27A: вкладка чата (/app) важнее прочих страниц Gemini
-  $a=@($c | Where-Object { ([string]$_.url) -like '*/app*' }) | Select-Object -First 1
-  if($a){ $a } else { $c | Select-Object -First 1 }
+  $a=@($list | Where-Object { $_.type -eq 'page' -and ([string]$_.url) -like "*$($Cfg.CdpUrlLike)*" -and ([string]$_.url) -like '*/app*' -and ([string]$_.url) -notlike '*/usage*' })
+  $probe=@{}
+  if($a.Count -gt 1 -and $Cfg.GemTabProbe){ foreach($t in $a){ $probe[[string]$t.id]=Get-GeminiTabProbe $t } }
+  $r=Select-GeminiChatTarget $list $probe
+  $script:CdpPickInfo=$r
+  $r.target
 }
-function Find-CdpUsageTarget{ @(Cdp-HttpJson '/json/list' | Where-Object { $_.type -eq 'page' -and ([string]$_.url) -like "*$($Cfg.CdpUrlLike)*" -and ([string]$_.url) -like '*/usage*' }) | Select-Object -First 1 }
+# 25.10 (tabfix): вкладка лимитов — того же аккаунта (/u/N), что и вкладка чата; чужого аккаунта не беру.
+function Get-GeminiUsageUrl{ $n= if($script:CdpLastUrl){ Get-GeminiAccountIndex $script:CdpLastUrl } else { 0 }; if($n -gt 0){ ([string]$Cfg.GeminiUsageUrl) -replace 'gemini\.google\.com/(u/\d+/)?',"gemini.google.com/u/$n/" } else { [string]$Cfg.GeminiUsageUrl } }
+function Select-GeminiUsageTarget($List,[string]$ChatUrl=''){
+  $u=@($List | Where-Object { $_.type -eq 'page' -and ([string]$_.url) -like "*$($Cfg.CdpUrlLike)*" -and ([string]$_.url) -like '*/usage*' })
+  if(-not $ChatUrl){ return ($u | Select-Object -First 1) }
+  $want=Get-GeminiAccountIndex $ChatUrl
+  @($u | Where-Object { (Get-GeminiAccountIndex ([string]$_.url)) -eq $want }) | Select-Object -First 1
+}
+function Find-CdpUsageTarget{
+  if(-not $script:CdpLastUrl -and $Cfg.GemTabProbe){ try{ [void](Connect-Cdp) }catch{} }
+  Select-GeminiUsageTarget @(Cdp-HttpJson '/json/list') $(if($Cfg.GemTabProbe){ $script:CdpLastUrl } else { '' })
+}
 # Ошибка «CDP недоступен» (браузер без порта, нет вкладки, связь оборвалась) — только тогда допустим откат на UIA (пункт 27A).
 function Test-CdpUnreachable($Err){
   $m= if($Err -is [System.Management.Automation.ErrorRecord]){ [string]$Err.Exception.Message } else { [string]$Err }
   [bool]($m -match '(?i)CDP[^:]*:.*(не отвечает|нет вкладки)|соединение закрыто|WebSocket|Unable to connect|actively refused|connection refused|No connection could be made|отверг|невозможно установить')
 }
 function Connect-Cdp([switch]$Force){
-  if(-not $Force -and $script:CdpConn -and $script:CdpConn.ws -and $script:CdpConn.ws.State -eq 'Open'){ return $script:CdpConn }
+  if(-not $Force -and $script:CdpConn -and $script:CdpConn.ws -and $script:CdpConn.ws.State -eq 'Open'){
+    # 25.10 (tabfix): раньше сокет держался на однажды выбранной вкладке навсегда (после смены аккаунта — старая вкладка).
+    # Раз в GemTabRecheckSec сверяю лучшую вкладку; пока отчёт ждёт ответа (этап sent) — вкладку не меняю.
+    if(-not $Cfg.GemTabProbe -or ((Get-Date)-$script:CdpPickAt).TotalSeconds -lt [int]$Cfg.GemTabRecheckSec){ return $script:CdpConn }
+    $script:CdpPickAt=Get-Date
+    $waiting=$false; try{ $waiting=@($script:St.files.Keys | Where-Object { (Get-Stage $_) -eq 'sent' }).Count -gt 0 }catch{}
+    if($waiting){ return $script:CdpConn }
+    $nt=$null; try{ $nt=Find-CdpTarget }catch{}
+    if(-not $nt -or [string]$nt.id -eq [string]$script:CdpConn.targetId){ return $script:CdpConn }
+    Log "Gemini (CDP): лучшая вкладка чата сменилась → $($nt.url) — переподключаюсь"
+  }
   if($script:CdpConn){ Cdp-Close $script:CdpConn; $script:CdpConn=$null }
   try{ $t=Find-CdpTarget }catch{ throw [GG.RelayNotSentException]::new("CDP: Chrome с --remote-debugging-port=$($Cfg.CdpPort) не отвечает ($($_.Exception.Message))") }
   if(-not $t){ throw [GG.RelayNotSentException]::new("CDP: нет вкладки с адресом '*$($Cfg.CdpUrlLike)*'") }
-  $c=Cdp-Open $t.webSocketDebuggerUrl; $c.targetId=$t.id; $script:CdpConn=$c
+  $c=Cdp-Open $t.webSocketDebuggerUrl; $c.targetId=$t.id; $script:CdpConn=$c; $script:CdpPickAt=Get-Date
+  if([string]$t.url -ne $script:CdpLastUrl){
+    $pi=$script:CdpPickInfo
+    Log "Gemini (CDP): вкладка чата $($t.url) (аккаунт /u/$(Get-GeminiAccountIndex $t.url)$(if($pi -and $pi.why){"; $($pi.why)"}))$(if($pi -and $pi.ambiguous){' — ⚠ неоднозначно: закройте лишние вкладки Gemini'})"
+    $script:CdpLastUrl=[string]$t.url
+  }
   try{ [void](Invoke-Cdp 'Emulation.setFocusEmulationEnabled' @{ enabled=$true } -Conn $c) }catch{}
   $c
 }
@@ -209,35 +278,46 @@ function GemCdp-SendFile([string]$Path,[string]$Name){
   try{
     $c=Connect-Cdp
     if(-not (Eval-Js 'ready' -Conn $c)){ throw 'нет поля ввода' }
-    if(-not (Eval-Js 'focusClear' -Conn $c)){ throw 'фокус в поле ввода не подтверждён' }
     $pBefore=[int](Eval-Js 'prompts' -Conn $c); $before=[int](Eval-Js 'state' -Conn $c).n
-    # Диалог выбора файла перехватывается (окно Windows не открывается); событие Page.fileChooserOpened даёт backendNodeId поля <input type=file>,
-    # которое Gemini создаёт на лету и часто не вставляет в DOM — поэтому файл ставится по backendNodeId, а поиск в DOM только запасной.
-    $c.events=New-Object System.Collections.ArrayList
-    try{ [void](Invoke-Cdp 'Page.enable' @{} -Conn $c) }catch{}
-    [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$true } -Conn $c)
-    try{
-      if((Eval-Js 'openUpload' -Conn $c) -ne 'ok'){ throw 'кнопка «+» («Загрузка и инструменты») не найдена' }
-      $clicked=$false; for($i=0;$i -lt 8 -and -not $clicked;$i++){ Start-Sleep -Milliseconds 400; $clicked=[bool](Eval-Js 'clickUploadItem' -Conn $c) }
-      if(-not $clicked){ throw 'пункт меню «Загрузить файлы» не найден' }
-      $bk=$null; $t1=Get-Date
-      while(-not $bk -and ((Get-Date)-$t1).TotalSeconds -lt 6){
-        $ev=@($c.events | Where-Object { $_.method -eq 'Page.fileChooserOpened' }) | Select-Object -Last 1
-        if($ev -and $ev.params.backendNodeId){ $bk=[int]$ev.params.backendNodeId; break }
-        Start-Sleep -Milliseconds 300; [void](Invoke-Cdp 'Runtime.evaluate' @{ expression='1'; returnByValue=$true } -Conn $c)   # прокачать события
-      }
-      if($bk){ [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); backendNodeId=$bk } -Conn $c) }
-      else{
-        $doc=Invoke-Cdp 'DOM.getDocument' @{ depth=-1; pierce=$true } -Conn $c
-        $ids=@((Invoke-Cdp 'DOM.querySelectorAll' @{ nodeId=$doc.root.nodeId; selector='input[type=file]' } -Conn $c).nodeIds)
-        if(-not $ids.Count){ throw 'поле выбора файла не найдено (диалог не открылся)' }
-        [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); nodeId=$ids[-1] } -Conn $c)
-      }
-    } finally { try{ [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$false } -Conn $c) }catch{}; $c.events=$null }
-    $base=$Name -replace '\.md$',''; $ok=$false; $t0=Get-Date
+    # Пункт 59: чип уже в поле (прошлый обрыв) — не трогаю диалог, сразу жду Send.
+    $already=@(@(Eval-Js 'chips' -Conn $c | ForEach-Object { [string]$_ }) | Where-Object { Test-ChipMatchesName $_ $Name })
+    if(-not $already.Count){
+      if(-not (Eval-Js 'focusClear' -Conn $c)){ throw 'фокус в поле ввода не подтверждён' }
+      # Диалог выбора файла перехватывается (окно Windows не открывается); событие Page.fileChooserOpened даёт backendNodeId поля <input type=file>,
+      # которое Gemini создаёт на лету и часто не вставляет в DOM — поэтому файл ставится по backendNodeId, а поиск в DOM только запасной.
+      $c.events=New-Object System.Collections.ArrayList
+      try{ [void](Invoke-Cdp 'Page.enable' @{} -Conn $c) }catch{}
+      [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$true } -Conn $c)
+      try{
+        if((Eval-Js 'openUpload' -Conn $c) -ne 'ok'){ throw 'кнопка «+» («Загрузка и инструменты») не найдена' }
+        $clicked=$false; for($i=0;$i -lt 8 -and -not $clicked;$i++){ Start-Sleep -Milliseconds 400; $clicked=[bool](Eval-Js 'clickUploadItem' -Conn $c) }
+        if(-not $clicked){ throw 'пункт меню «Загрузить файлы» не найден' }
+        $bk=$null; $t1=Get-Date
+        while(-not $bk -and ((Get-Date)-$t1).TotalSeconds -lt 6){
+          $ev=@($c.events | Where-Object { $_.method -eq 'Page.fileChooserOpened' }) | Select-Object -Last 1
+          if($ev -and $ev.params.backendNodeId){ $bk=[int]$ev.params.backendNodeId; break }
+          Start-Sleep -Milliseconds 300; [void](Invoke-Cdp 'Runtime.evaluate' @{ expression='1'; returnByValue=$true } -Conn $c)   # прокачать события
+        }
+        if($bk){ [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); backendNodeId=$bk } -Conn $c) }
+        else{
+          $doc=Invoke-Cdp 'DOM.getDocument' @{ depth=-1; pierce=$true } -Conn $c
+          $ids=@((Invoke-Cdp 'DOM.querySelectorAll' @{ nodeId=$doc.root.nodeId; selector='input[type=file]' } -Conn $c).nodeIds)
+          if(-not $ids.Count){ throw 'поле выбора файла не найдено (диалог не открылся)' }
+          [void](Invoke-Cdp 'DOM.setFileInputFiles' @{ files=@($Path); nodeId=$ids[-1] } -Conn $c)
+        }
+      } finally { try{ [void](Invoke-Cdp 'Page.setInterceptFileChooserDialog' @{ enabled=$false } -Conn $c) }catch{}; $c.events=$null }
+    } else { Log "Gemini (CDP): чип «$Name» уже в поле ввода — отправляю без повторной загрузки" }
+    $base=$Name -replace '\.md$',''; $ok=$false; $t0=Get-Date; $lastChips=@(); $sendOn=$false; $hasChip=$false
     while(((Get-Date)-$t0).TotalSeconds -lt $Cfg.AttachTimeoutSec -and -not $ok){ Start-Sleep -Milliseconds 700
-      $ch=@(Eval-Js 'chips' -Conn $c | ForEach-Object { [string]$_ }); $ok=(@($ch | Where-Object { $_ -like "*$base*" }).Count -gt 0) -and [bool](Eval-Js 'sendEnabled' -Conn $c) }
-    if(-not $ok){ throw "чип файла $Name не появился или загрузка не закончилась" }
+      $lastChips=@(@(Eval-Js 'chips' -Conn $c | ForEach-Object { [string]$_ }) | Where-Object { $_ })
+      $hasChip=(@($lastChips | Where-Object { Test-ChipMatchesName $_ $Name }).Count -gt 0)
+      $sendOn=[bool](Eval-Js 'sendEnabled' -Conn $c)
+      if($hasChip -and $sendOn){ $ok=$true }
+    }
+    if(-not $ok){
+      $det="чипы в поле ввода=[$(@($lastChips | Select-Object -Unique | ForEach-Object { Format-Short ([string]$_) 60 }) -join ' | ')]; hasChip=$hasChip; sendEnabled=$sendOn"
+      throw "чип файла $Name не появился или загрузка не закончилась ($det)"
+    }
     if(([string](Eval-Js 'inputText' -Conn $c)).Trim()){ throw 'в поле ввода есть текст — вместе с файлом не отправляю' }
     Assert-CanSendGemini 'отправку файла в Gemini' | Out-Null
     if(-not (Eval-Js 'clickSend' -Conn $c)){ throw 'кнопка «Отправить» не найдена или недоступна' }
@@ -246,7 +326,12 @@ function GemCdp-SendFile([string]$Path,[string]$Name){
     throw [GG.RelayNotSentException]::new("Gemini/CDP (файл): $($_.Exception.Message) — НЕ отправлено")
   }
   for($i=0;$i -lt 20;$i++){ Start-Sleep -Milliseconds 500
-    try{ if([int](Eval-Js 'prompts' -Conn $c) -gt $pBefore){ Log "Отправлено в Gemini (CDP): только вложение $Name"; return @{ before=$before; pBefore=$pBefore; via='cdp-file' } } }catch{} }
+    try{ if([int](Eval-Js 'prompts' -Conn $c) -gt $pBefore){
+        # 27.10 (sendfix): проверка отправки — новый запрос пользователя должен нести ЭТОТ файл
+        $lastQ=''; try{ $lastQ=[string](@(Eval-Js 'promptTexts' -Conn $c | ForEach-Object { [string]$_ }) | Select-Object -Last 1) }catch{}
+        if($lastQ -and (Test-ChipMatchesName $lastQ $Name)){ Log "Отправлено в Gemini (CDP): только вложение $Name (новый запрос с этим файлом появился в чате)" }
+        else { Log "Отправлено в Gemini (CDP): только вложение $Name (новый запрос появился; имя файла в нём не прочитано — проверьте чат)" }
+        return @{ before=$before; pBefore=$pBefore; via='cdp-file' } } }catch{} }
   throw "Gemini/CDP: после «Отправить» запрос с файлом $Name не появился (повторно не отправляю)"
 }
 function GemCdp-WaitAnswer($Ctx){
@@ -266,13 +351,13 @@ function GemCdp-GetCode{
   Log "Блоков кода в последнем ответе (CDP): $($b.Count) $(($script:LastCodeLangs | ForEach-Object { "'$_'" }) -join ', ')"
   if(-not $b.Count){ return $null }
   $i=Select-CodeBlockIndex -Langs @($b | ForEach-Object { [string]$_.lang }) -Lang $Cfg.CodeBlockLang -Pick $Cfg.CodeBlockPick
-  if($i -lt 0){ return $null }; [string]$b[$i].code
+  if($i -lt 0){ return $null }; $code=[string]$b[$i].code; if($code -match '^(?i)(markdown|xml|json|text|python|html|javascript)\r?\n'){ $code=$code.Substring($matches[0].Length) }; $code
 }
 function GemCdp-PeekAnswer{
   $s=Eval-Js 'state'; $np=[int](Eval-Js 'prompts'); $b=@(Eval-Js 'codes')
   $l=@($b | ForEach-Object { Normalize-CodeLang ([string]$_.lang) })
   $i=Select-CodeBlockIndex -Langs $l -Lang $Cfg.CodeBlockLang -Pick $Cfg.CodeBlockPick
-  @{ answered=([int]$s.n -ge $np -and $np -gt 0 -and [int]$s.len -gt 0 -and -not $s.gen); labels=$l; md=($i -ge 0); code=$(if($i -ge 0){ [string]$b[$i].code }else{ $null }) }
+  $code=$(if($i -ge 0){ [string]$b[$i].code }else{ $null }); if($code -and $code -match '^(?i)(markdown|xml|json|text|python|html|javascript)\r?\n'){ $code=$code.Substring($matches[0].Length) }; @{ answered=([int]$s.n -ge $np -and $np -gt 0 -and [int]$s.len -gt 0 -and -not $s.gen); labels=$l; md=($i -ge 0); code=$code }
 }
 function GemCdp-GetWhole{ [string](Eval-Js 'whole') }
 # Лимиты (пункт 27A): вкладка gemini.google.com/usage в CDP-браузере — чтение Runtime.evaluate, обновление Page.reload (без фокуса).
@@ -284,7 +369,7 @@ function GemCdp-GetUsageText{
   $fresh=$false
   if(-not $t){
     $c=Connect-Cdp
-    $tid=(Invoke-Cdp 'Target.createTarget' @{ url=$Cfg.GeminiUsageUrl; background=$true } -Conn $c).targetId
+    $tid=(Invoke-Cdp 'Target.createTarget' @{ url=(Get-GeminiUsageUrl); background=$true } -Conn $c).targetId
     for($i=0;$i -lt 20 -and -not $t;$i++){ Start-Sleep -Milliseconds 300; $t=@(Cdp-HttpJson '/json/list' | Where-Object { $_.id -eq $tid }) | Select-Object -First 1 }
     if(-not $t){ throw 'фоновая вкладка лимитов не появилась' }
     Log 'Лимиты (CDP): вкладки лимитов не было — открыл фоновую, она останется открытой'; $fresh=$true; $script:CdpUsageReloadAt=Get-Date
@@ -317,6 +402,19 @@ function GemCdp-ListModels{
   $cur=GemCdp-GetModel; $items=@()
   try{ $items=@(GemCdp-OpenModelMenu) } finally { try{ [void](Eval-Js 'modelClose') }catch{} }
   @{ current=$cur; items=$items }
+}
+# 27.10: подпись аккаунта Google в шапке Gemini («Аккаунт Google: Имя (почта)») — читается без меню и без фокуса
+function GemCdp-GetAccount{ try{ [string](Eval-Js 'account') }catch{ '' } }
+# 27.10: принудительно (Force) или при смене лучшей вкладки — переподключить CDP к актуальной вкладке чата Gemini. @{ changed; url }
+function Select-GeminiTabNow([switch]$Force){
+  $old=[string]$script:CdpLastUrl
+  if(-not $Force -and $script:CdpConn -and $script:CdpConn.ws -and $script:CdpConn.ws.State -eq 'Open'){
+    $nt=$null; try{ $nt=Find-CdpTarget }catch{}
+    if($nt -and [string]$nt.id -eq [string]$script:CdpConn.targetId){ $script:CdpPickAt=Get-Date; return @{ changed=$false; url=[string]$script:CdpLastUrl } }
+  }
+  if($script:CdpConn){ Cdp-Close $script:CdpConn; $script:CdpConn=$null }
+  [void](Connect-Cdp -Force)
+  @{ changed=([string]$script:CdpLastUrl -ne $old); url=[string]$script:CdpLastUrl }
 }
 function GemCdp-SelectModel([string]$Want){
   $cur=GemCdp-GetModel

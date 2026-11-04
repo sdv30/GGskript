@@ -15,6 +15,11 @@ function Use-GemTransport{
   }
   catch{
     $k=Get-ErrorKind $_
+    if(-not $Cfg.GeminiCdpFallback -and (Test-CdpUnreachable $_) -and -not $script:CdpDownSaid){
+      $script:CdpDownSaid=$true
+      $m="⚠️ Gemini: порт отладки $($Cfg.CdpPort) не отвечает. В оконный режим (фокус, клавиатура) НЕ перехожу, чтобы не мешать вам работать. Откройте Gemini кнопкой «🌐 Chrome с портом»."
+      Log $m; try{ Tg-Send $m -DedupMin 30 | Out-Null }catch{}
+    }
     if(-not $Cfg.GeminiCdpFallback -or (@('stop','limit','paused','stale') -contains $k)){ throw }
     if($Send -and $k -ne 'notsent'){ throw }
     if(-not (Test-CdpUnreachable $_)){ throw }
@@ -54,5 +59,6 @@ function Gem-CountPrompts{ Use-GemTransport 'число запросов' { GemU
 function Gem-GetUsageText{ Use-GemTransport 'лимиты' { GemUia-GetUsageText } { GemCdp-GetUsageText } }
 # Пункт 27C: есть ли файл в чате Gemini (по «Файл отчёта: имя», вложению с именем или по содержимому) -> $null | @{how;index;last}
 function Gem-FindFile([string]$Name,[string]$Content){ Use-GemTransport 'поиск файла в чате' { Find-FileInTexts -Name $Name -Content $Content -Texts (GemUia-ChatTexts (Gem-UiaWindow)) } { Find-FileInTexts -Name $Name -Content $Content -Texts (GemCdp-PromptTexts) -Whole } }
+function Gem-GetAccount{ Use-GemTransport 'аккаунт' { '' } { GemCdp-GetAccount } }
 function Gem-ListModels{ Use-GemTransport 'список моделей' { GemUia-ListModels (Gem-UiaWindow) } { GemCdp-ListModels } }
 function Gem-SelectModel([string]$Want){ Use-GemTransport 'выбор модели' { GemUia-SelectModel (Gem-UiaWindow) $Want } { GemCdp-SelectModel $Want } }
