@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">GGskript</title>
+  <desc id="heroDesc">GGskript переносит задание Gemini Argon в чат агента IDE и возвращает отчёт обратно в Gemini. Зелёные лампы — порты отладки Chrome и IDE.</desc>
+  <rect width="1200" height="480" rx="18" fill="#18181C"/>
+  <g id="title-block" font-family="Segoe UI, PingFang SC, sans-serif">
+    <text x="56" y="92" fill="#C5CAD3" font-size="20" font-weight="600" letter-spacing="1.5">РЕЛЕ ДЛЯ WINDOWS</text>
+    <text x="56" y="176" fill="#F4F4F5" font-size="72" font-weight="700">GGskript</text>
+    <text x="56" y="236" fill="#F4F4F5" font-size="24">Argon ставит шаг. Агент IDE пишет код.</text>
+    <text x="56" y="274" fill="#F4F4F5" font-size="24">Скрипт сам носит задание и отчёт.</text>
+    <g id="port-lamps" font-size="20">
+      <circle cx="68" cy="348" r="8" fill="#3DDC84"/>
+      <text x="88" y="355" fill="#F4F4F5">Chrome 9222</text>
+      <circle cx="262" cy="348" r="8" fill="#3DDC84"/>
+      <text x="282" y="355" fill="#F4F4F5">IDE 9333–9335</text>
+      <circle cx="68" cy="396" r="7" fill="none" stroke="#C5CAD3" stroke-width="2"/>
+      <text x="88" y="403" fill="#C5CAD3">Telegram — по желанию</text>
+    </g>
+  </g>
+  <g id="relay">
+    <rect x="688" y="36" width="456" height="408" rx="16" fill="#121418"/>
+    <g id="gemini-tile" font-family="Segoe UI, PingFang SC, sans-serif">
+      <rect x="716" y="60" width="400" height="112" rx="12" fill="#22262E" stroke="#3A4150" stroke-width="1.5"/>
+      <circle cx="748" cy="100" r="8" fill="#3DDC84"/>
+      <text x="770" y="107" fill="#F4F4F5" font-size="24" font-weight="700">Gemini</text>
+      <text x="740" y="146" fill="#F4F4F5" font-size="20">модель Argon · порт 9222</text>
+    </g>
+    <g id="step-slip" font-family="Segoe UI, PingFang SC, sans-serif">
+      <rect x="748" y="196" width="336" height="92" rx="8" fill="#F4F4F5"/>
+      <text x="772" y="236" fill="#18181C" font-size="22" font-family="Cascadia Mono, Consolas, ui-monospace, monospace">Проект_дата_001</text>
+      <text x="772" y="266" fill="#3A4150" font-size="18">последний блок markdown</text>
+    </g>
+    <g id="ide-tile" font-family="Segoe UI, PingFang SC, sans-serif">
+      <rect x="716" y="312" width="400" height="108" rx="12" fill="#22262E" stroke="#3A4150" stroke-width="1.5"/>
+      <circle cx="748" cy="348" r="8" fill="#3DDC84"/>
+      <text x="770" y="355" fill="#F4F4F5" font-size="24" font-weight="700">Агент IDE</text>
+      <text x="740" y="392" fill="#F4F4F5" font-size="20">порт 9333, 9334 или 9335</text>
+    </g>
+  </g>
+</svg>
