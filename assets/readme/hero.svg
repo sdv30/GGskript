@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="heroTitle heroDesc">
   <title id="heroTitle">GGskript</title>
-  <desc id="heroDesc">GGskript переносит задание Gemini Argon в чат агента IDE и возвращает отчёт обратно в Gemini. Зелёные лампы — порты отладки Chrome и IDE.</desc>
+  <desc id="heroDesc">Автоматизация бесплатной оркестрации между Argon в браузере и IDE, например Antigravity. Старшая модель составляет план и ведёт цикл, младшая выполняет всю работу в IDE, а отчёт возвращается старшей, чтобы она задала следующий шаг. Зелёные лампы — порты отладки Chrome и IDE.</desc>
   <rect width="1200" height="480" rx="18" fill="#18181C"/>
   <g id="title-block" font-family="Segoe UI, PingFang SC, sans-serif">
     <text x="56" y="92" fill="#C5CAD3" font-size="20" font-weight="600" letter-spacing="1.5">РЕЛЕ ДЛЯ WINDOWS</text>
