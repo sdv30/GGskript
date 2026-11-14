@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="flowTitle flowDesc">
+  <title id="flowTitle">Рабочий цикл GGskript</title>
+  <desc id="flowDesc">Пять шагов: задание Argon, вставка в чат IDE, файл отчёта, отправка в Gemini только при модели Argon, проверка и следующий шаг.</desc>
+  <rect width="1200" height="280" rx="18" fill="#18181C"/>
+  <g fill="none" stroke="#3A4150" stroke-width="2">
+    <path d="M248 140 H272"/>
+    <path d="M472 140 H496"/>
+    <path d="M696 140 H720"/>
+    <path d="M920 140 H944"/>
+  </g>
+  <g id="steps" font-family="Segoe UI, PingFang SC, sans-serif">
+    <g id="step-1">
+      <rect x="48" y="48" width="200" height="184" rx="14" fill="#22262E"/>
+      <text x="72" y="108" fill="#3DDC84" font-size="32" font-weight="700">01</text>
+      <text x="72" y="160" fill="#F4F4F5" font-size="22" font-weight="700">Задание</text>
+      <text x="72" y="192" fill="#C5CAD3" font-size="20">Argon</text>
+    </g>
+    <g id="step-2">
+      <rect x="272" y="48" width="200" height="184" rx="14" fill="#22262E"/>
+      <text x="296" y="108" fill="#3DDC84" font-size="32" font-weight="700">02</text>
+      <text x="296" y="160" fill="#F4F4F5" font-size="22" font-weight="700">В чат</text>
+      <text x="296" y="192" fill="#C5CAD3" font-size="20">агента IDE</text>
+    </g>
+    <g id="step-3">
+      <rect x="496" y="48" width="200" height="184" rx="14" fill="#22262E"/>
+      <text x="520" y="108" fill="#3DDC84" font-size="32" font-weight="700">03</text>
+      <text x="520" y="160" fill="#F4F4F5" font-size="22" font-weight="700">Файл</text>
+      <text x="520" y="192" fill="#C5CAD3" font-size="20">отчёта .md</text>
+    </g>
+    <g id="step-4">
+      <rect x="720" y="48" width="200" height="184" rx="14" fill="#22262E" stroke="#FF6B6B" stroke-width="2"/>
+      <text x="744" y="108" fill="#FF6B6B" font-size="32" font-weight="700">04</text>
+      <text x="744" y="160" fill="#F4F4F5" font-size="22" font-weight="700">В Gemini</text>
+      <text x="744" y="192" fill="#C5CAD3" font-size="20">только Argon</text>
+    </g>
+    <g id="step-5">
+      <rect x="944" y="48" width="200" height="184" rx="14" fill="#22262E"/>
+      <text x="968" y="108" fill="#3DDC84" font-size="32" font-weight="700">05</text>
+      <text x="968" y="160" fill="#F4F4F5" font-size="22" font-weight="700">Проверка</text>
+      <text x="968" y="192" fill="#C5CAD3" font-size="20">или правка</text>
+    </g>
+  </g>
+</svg>
